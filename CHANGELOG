@@ -1,3 +1,9 @@
+0.10	11 November 2003
+	Added check for processes dieing at the length check of a message.
+	Not 100% sure whether this will be the best way to handle the main
+	thread dieing, e.g. when it exits before all threads have been
+	joined.
+
 0.09	24 October 2003
 	Apparently, Test::Harness cannot handle testing "threaded" scripts
 	using an unthreaded Perl.  Added test for threadedness of the Perl

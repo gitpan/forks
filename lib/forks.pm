@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.09';
+$VERSION = '0.10';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -729,7 +729,6 @@ sub _length {
 #   Return the actual length
 #  Elsif we didn't get anything
 #   Return 0 if we don't need to croak yet
-# Die, there was an error
 
     my $client = shift;
     my $length;
@@ -739,8 +738,21 @@ sub _length {
             return unpack( 'N',$length );
         } elsif (length( $length ) == 0) {
             return 0 if shift;
-	}
+        }
     }
+
+# Exit now if this looks as if the connection was reset (probably dieing)
+#**************************************************************************
+# There is no easy way to handle if the main thread exits.  This shows up *
+# as "Connection reset by peer" errors on the connection.  For now, we'll *
+# just exit when this happens.  As we can't be sure on the exact wording  *
+# of the error message, we're just looking for the word "reset".          *
+#**************************************************************************
+
+    CORE::exit() if !$! or $! =~ m#reset#i;
+
+# Die, there was an error
+
     _croak( "Could not read length of message from $CLIENT2TID{$client}: $!\n");
 } #_length
 
