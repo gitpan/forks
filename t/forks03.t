@@ -1,4 +1,3 @@
-
 #!/usr/local/bin/perl -T -w
 BEGIN {				# Magic Perl CORE pragma
     if ($ENV{PERL_CORE}) {
@@ -9,12 +8,21 @@ BEGIN {				# Magic Perl CORE pragma
 
 use forks; # must be done _before_ Test::More which loads real threads.pm
 use forks::shared;
+use Config;
 
-my ($tests,$entries);
+my ($reason,$tests,$entries);
 BEGIN {
     $entries = 25;
     $tests = 3 + (3 * $entries);
-    $tests = 1 unless eval {require Thread::Queue};
+
+    eval {require Thread::Queue};
+    $reason = '';
+    $reason = 'Thread::Queue not found'
+     unless defined $Thread::Queue::VERSION;
+    $reason ||= 'Cannot test Thread::Queue with an unthreaded Perl'
+     unless $Config{'useithreads'};
+
+    $tests = 1 if $reason;
 } #BEGIN
 
 use Test::More tests => $tests;
@@ -22,8 +30,7 @@ use strict;
 use warnings;
 
 SKIP: {
-    skip "Thread::Queue not available", $tests
-     unless defined $Thread::Queue::VERSION;
+    skip $reason, $tests if $reason;
 
     my $q = Thread::Queue->new;
     isa_ok( $q,'Thread::Queue', "Check if object has correct type" );

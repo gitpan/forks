@@ -1,3 +1,9 @@
+0.09	24 October 2003
+	Apparently, Test::Harness cannot handle testing "threaded" scripts
+	using an unthreaded Perl.  Added test for threadedness of the Perl
+	being used: if so, skips testing Thread::Queue.  Spotted by several
+	CPAN testers.
+
 0.08	24 October 2003
 	Shared entities that were also blessed as an object, were not
 	correctly handled (ref() versus Scalar::Util::reftype() ).  Spotted
