@@ -26,12 +26,12 @@ my $times = 100;
 #= ARRAY ==============================================================
 
 {
-share( my @array );
+my @array : shared;
 my $tied = tied( @array );
 isa_ok( $tied,'threads::shared',	'check object type' );
 
 my @thread;
-share( my $count );
+my $count : shared;
 $count  = 0;
 #warn "lock = ".(\&lock)."\n";
 push( @thread,threads->new( sub {
@@ -56,12 +56,12 @@ is( join('',@array),'',			'check array contents' );
 #= HASH ===============================================================
 
 {
-share( my %hash );
+my %hash : shared;
 my $tied = tied( %hash );
 isa_ok( $tied,'threads::shared',	'check object type' );
 
 my @thread;
-share( my $count );
+my $count : shared;
 $count = 0;
 push( @thread,threads->new( sub {
     while (1) {

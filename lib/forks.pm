@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.05';
+$VERSION = '0.06';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -1494,9 +1494,7 @@ L<isthread>).  This is as yet untested within Apache, but should work.
 
 You should be able to run threaded applications unchanged by simply making
 sure that the "forks.pm" and "forks::shared.pm" modules are loaded, e.g. by
-specifying them on the command line.  This still doesn't work for all source
-code because the C<: shared> attribute has not yet been implemented.  Patches
-for this are welcomed.
+specifying them on the command line.
 
 =head2 development / demonstration tool
 

@@ -4,7 +4,7 @@ package threads::shared;  # yes, we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.05';
+$VERSION  = '0.06';
 $threads_shared = $threads_shared = 1;
 use strict;
 
@@ -39,6 +39,41 @@ if ($forks::threads || $forks::threads) { # twice to avoid warnings
 # Clone detection logic
 
 our $CLONE = 0;
+
+# Do this at compile time
+#  Allow for dirty stuff in here
+#  For the three types for which we support : shared
+#   Create the name of the subroutine in question
+#   Get the reference of the current version
+
+BEGIN {
+    no strict 'refs';
+    foreach my $type (qw(SCALAR ARRAY HASH)) {
+        my $name = "UNIVERSAL\:\:MODIFY_${type}_ATTRIBUTES";
+        my $old = \&$name;
+
+#   Put our own handler in there
+#    Obtain the parameters in a way we can work with
+#    If the "shared" attribute was specified
+#     Share whatever reference was specified (allows us to use the same sub)
+
+        *$name = sub {
+            my ($package,$ref,@attribute) = @_;
+            if (grep m#^shared$#,@attribute) {
+                _share( $ref );
+            }
+
+#     If there are other attributes to handle still
+#      Call the original routine with the remaining attributes
+#     Return the remaining attributes
+
+            if (@attribute = grep !m#^shared$#,@attribute) {
+                $old->( $package,$ref,@attribute );
+            }
+            @attribute;
+        } #$name
+    }
+} #BEGIN
 
 # Satisfy require
 
@@ -313,7 +348,9 @@ forks::shared - drop-in replacement for Perl threads::shared with forks()
   use forks;
   use forks::shared;
 
-  my $variable : shared; # attributes do not work yet
+  my $variable : shared;
+  my @array    : shared;
+  my %hash     : shared;
 
   share( $variable );
   share( @array );
@@ -335,11 +372,6 @@ threaded perl, or to even run 5.8.0 or higher.
 These problems are known and will be fixed in the future:
 
 =over 2
-
-=item :shared attribute
-
-The :shared attribute on variables does not work yet.  Use the
-L<threads::share> function instead.
 
 =item test-suite exits in a weird way
 
@@ -376,7 +408,7 @@ Please report bugs to <perlbugs@dijkmat.nl>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
 reserved.  This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

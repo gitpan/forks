@@ -1,3 +1,11 @@
+0.06	27 September 2003
+	Finally grokked the documentation about attributes.  This allowed me
+	to finally write the handler for the ":shared" attribute.  Which in
+	the end turned out to be surprisingly simple.
+
+	Adapted the test-suite to test usage of the ":shared" attribute as
+	opposed to sharing variables with the "share" subroutine.
+
 0.05	26 September 2003
 	Increased dependency on load.pm to 0.11: versions of load.pm before
 	that had issues with running under taint.
