@@ -1,3 +1,16 @@
+0.05	26 September 2003
+	Increased dependency on load.pm to 0.11: versions of load.pm before
+	that had issues with running under taint.
+
+	Debug statements can now be activated by setting the environment
+	variable THREADS_DEBUG to true.  As this is still experimental, this
+	feature is only described in the CHANGELOG for now.
+
+	Fixed several issues when running under taint.  Test-suite now runs
+	in tainted mode just to be on the safe side.
+
+	Removed some debug statements from the test-suite.
+
 0.04	10 August 2003
 	Implemented .xs file munging and source-filter to be able to truly
 	support forks.pm under Perl 5.6.x.  Thanks to Juerd Waalboer for the

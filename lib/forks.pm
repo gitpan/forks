@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.04';
+$VERSION = '0.05';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -128,7 +128,7 @@ my %JOINED;
 
 my %BLOCKING_PID2TID;
 my %BLOCKING_JOIN;
-my $DEBUG;
+my $DEBUG = $ENV{'THREADS_DEBUG'};
 
 # Initialize hash (key: fq sub) with code references to tie subroutines
 # List with objects of shared (tied) variables
@@ -530,12 +530,14 @@ _log( " <$CLIENT2TID{$client} ".length($data)." of $toread{$client}" ) if $DEBUG
                 if ($read == $toread{$client}) {
 _log( " =$CLIENT2TID{$client} ".CORE::join(' ',_unpack( $read{$client} )) ) if $DEBUG;
 
+#     Create untainted version of what we got
 #     Go handle that
 #     Remove the number of characters to read
 #    Elseif we got too much
 #     Die now
 
-                    _handle( $client,$read{$client} );
+                    $read{$client} =~ m#^(.*)$#s;
+                    _handle( $client,$1 );
                     delete( $toread{$client} );
                     delete( $read{$client} );
                 } elsif ($read > $toread{$client}) {
@@ -756,14 +758,16 @@ sub _send {
     my $client = shift;
     my $frozen = _pack( @_ );
     my $length = length( $frozen );
-_log( "> ".CORE::join(' ',eval {_unpack( substr($frozen,4) )}) ) if $DEBUG;
+_log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack( substr($frozen,4) )}) )
+ if $DEBUG;
 
 # Send the data, find out how many really got sent
 # Die now if an error has occurred
 # Die now if not all bytes sent
 
-    my $sent = send( $client,$frozen,0 );
-    _croak( "Error when sending message $sent to $CLIENT2TID{$client}: $!" )
+    $frozen =~ m#^(.*)$#s;
+    my $sent = send( $client,$1,0 );
+    _croak( "Error when sending message to $CLIENT2TID{$client}: $!" )
      unless defined($sent);
     _croak( "Did not send all bytes: only $sent of $length to $CLIENT2TID{$client}\n" )
      unless $sent == $length;
@@ -784,13 +788,15 @@ sub _receive {
     my $frozen;
 
 # If we successfully get all data
+#  Untaint what we got
 #  Obtain any parameters if possible
 #  Return the result
 
     if (defined( recv( $client,$frozen,$length,0 ) )
         and length( $frozen ) == $length) {
-        my @result = @{thaw( $frozen )};
-_log( "< @result" ) if $DEBUG;
+        $frozen =~ m#^(.*)$#s;
+        my @result = @{thaw( $1 )};
+_log( "< @{[map {$_ || ''} @result]}" ) if $DEBUG;
         return wantarray ? @result : $result[0];
     }
 

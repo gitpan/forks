@@ -1,3 +1,4 @@
+#!/usr/local/bin/perl -T -w
 BEGIN {				# Magic Perl CORE pragma
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
@@ -52,6 +53,7 @@ unless (my $pid = fork) {
   threads->isthread if defined($pid);
   exit;
 }
+sleep 3; # make sure fork above has started to ensure tid's are in sync
 
 my $t1 = threads->new( sub { threads->tid } );
 ok( $t1,'check whether we can start a thread with new()' );

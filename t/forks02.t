@@ -1,3 +1,4 @@
+#!/usr/local/bin/perl -T -w
 BEGIN {				# Magic Perl CORE pragma
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
@@ -32,6 +33,7 @@ isa_ok( $tied,'threads::shared',	'check object type' );
 my @thread;
 share( my $count );
 $count  = 0;
+#warn "lock = ".(\&lock)."\n";
 push( @thread,threads->new( sub {
     while (1) {
         {lock( $count );
