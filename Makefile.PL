@@ -1,6 +1,7 @@
 require 5.006;
 use strict;
 use ExtUtils::MakeMaker;
+eval "use Devel::Required";
 
 my $old = 'forks.xs';
 my $new = "$old.new";;
@@ -35,7 +36,7 @@ WriteMakefile (
  VERSION_FROM	=> 'lib/forks.pm',
 
  PREREQ_PM	=> {@extra_prereq,qw(
-		    Test::More		0
+		    Devel::Required     0
 		    Scalar::Util	1.01
 		    Storable		0
 		    load		0.11

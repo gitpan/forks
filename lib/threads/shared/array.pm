@@ -3,7 +3,7 @@ package threads::shared::array;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.10';
+$VERSION = '0.11';
 use strict;
 
 # Load only the stuff that we really need

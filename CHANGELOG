@@ -1,3 +1,9 @@
+0.11    28 December 2003
+        Added automatic required modules update using Devel::Required.
+
+	Added requirement for Devel::Required, so that optional modules
+	are listed as required on the appropriate systems.
+
 0.10	11 November 2003
 	Added check for processes dieing at the length check of a message.
 	Not 100% sure whether this will be the best way to handle the main

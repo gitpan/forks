@@ -17,6 +17,12 @@ has some significant differences:
 If for nothing else, it allows you to test out the Perl threading model,
 even in older versions of Perl (you do _not_ require 5.8.0 for this).
 
+Required Modules:
+ Devel::Required (any)
+ load (0.11)
+ Scalar::Util (1.01)
+ Storable (any)
+
 The build is standard:
 
 perl Makefile.PL

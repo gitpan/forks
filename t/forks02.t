@@ -60,7 +60,7 @@ isa_ok( $tied,'threads::shared',	'check object type' );
 my @thread;
 my $count : shared;
 $count = 0;
-push( @thread,threads->new( sub {
+my $sub = sub {
     while (1) {
         {lock( $count );
          return if $count == $times;
@@ -68,7 +68,11 @@ push( @thread,threads->new( sub {
          $hash{$count} = $count;
         }
     }
-} ) ) foreach 1..10;
+};
+foreach (1..10) {
+    my $thread = threads->new( $sub );
+    push @thread,$thread;
+}
 $_->join foreach @thread;
 
 my $check;

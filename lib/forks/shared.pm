@@ -5,7 +5,7 @@ package threads::shared;  # but we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.10';
+$VERSION  = '0.11';
 $threads_shared = $threads_shared = 1;
 use strict;
 

@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.10';
+$VERSION = '0.11';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -1517,6 +1517,13 @@ Perl 5.005 should in principle be able to support the forks.pm module: because
 of some issues with regards to the availability of XS features between
 different versions of Perl, it seems that 5.6.0 (unthreaded) is what you need
 at least.
+
+=head1 REQUIRED MODULES
+
+ Devel::Required (any)
+ load (0.11)
+ Scalar::Util (1.01)
+ Storable (any)
 
 =head1 IMPLEMENTATION
 
