@@ -1,3 +1,14 @@
+0.16	8 April 2004
+	Changed semantics of debugging function: must now specify environment
+	variable THREADS_DEBUG to be able to enable and disable debugging.
+	If the environment variable does not exist at compile time, then all
+	of the debugging code is optimised away.  So performance in production
+	environments should be better than before.
+
+	29 March 2004
+	Goto &sub considered evil with regards to performance and memory
+	leaking.  Therefore removed goto's where appropriate.
+
 0.15	14 January 2004
 	Just got too much mail from people attempting to use forks.pm on
 	Windows.  Decided to add check for Win32 to Makefile.PL to have it

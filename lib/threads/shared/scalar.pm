@@ -3,7 +3,7 @@ package threads::shared::scalar;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.15';
+$VERSION = '0.16';
 use strict;
 
 # Satisfy -require-

@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.15';
+$VERSION = '0.16';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -54,6 +54,24 @@ EOD
 } #BEGIN
 
 #---------------------------------------------------------------------------
+
+# Global debug flag
+# Do this at compile time
+#  If there is a THREADS_DEBUG specification
+#   Set its value
+#   Make sure access is done with the DEBUG sub
+#  Else (we never need any debug info)
+#   Make DEBUG a false constant: debugging code should be optimised away
+
+my $DEBUG;
+BEGIN {
+    if (exists $ENV{'THREADS_DEBUG'}) {
+        $DEBUG = $ENV{'THREADS_DEBUG'};
+        *DEBUG = sub { $DEBUG };
+    } else {
+        *DEBUG = sub () { 0 };
+    }
+} #BEGIN
 
 # Load the XS stuff
 
@@ -120,11 +138,9 @@ my %JOINED;
 
 # Initialize hash (key: pid) with clients blocking of pid->tid conversion
 # Initialize hash (key: tid) with clients blocking for join() result
-# Global debug flag
 
 my %BLOCKING_PID2TID;
 my %BLOCKING_JOIN;
-my $DEBUG = $ENV{'THREADS_DEBUG'};
 
 # Initialize hash (key: fq sub) with code references to tie subroutines
 # List with objects of shared (tied) variables
@@ -342,7 +358,7 @@ sub equal { $_[0]->tid == $_[1]->tid } #equal
 #      2..N any parameters to be passed
 # OUT: 1 instantiated object
 
-sub async (&;@) { unshift @_,'threads'; goto &new } #async
+sub async (&;@) { new( 'threads',@_ ) } #async
 
 #---------------------------------------------------------------------------
 
@@ -377,7 +393,7 @@ sub forks::import {
 
     $INC{'threads.pm'} = $INC{'forks.pm'};
     _export( scalar(caller()),@_ );
-_log( " ! global startup" ) if $DEBUG;
+_log( " ! global startup" ) if DEBUG;
 
 # Create a server that can only take one connection at a time or die now
 # Find out the port we're running on and save that for later usage
@@ -399,7 +415,7 @@ _log( " ! global startup" ) if $DEBUG;
     $SIG{CHLD} = 'IGNORE';
     unless ($SHARED = fork) {
         _croak( "Could not start initial fork\n" ) unless defined( $SHARED );
-        goto &_server;
+        return &_server;
     }
     _init_thread();
 } #forks::import
@@ -461,13 +477,13 @@ sub _server {
 
     my $polls = 0;
     while ($RUNNING) {
-if ($DEBUG) {
+if (DEBUG) {
  my $clients = keys %WRITE;
  _log( " ! $clients>>" ) if $clients;
 }
         my $write = (each %WRITE) || '';
         my @reading = $select->can_read( ($write ? .001 : undef) );
-_log( " ! <<".@reading ) if $DEBUG and @reading;
+_log( " ! <<".@reading ) if DEBUG and @reading;
         $polls++;
 
 #  For all of the clients that have stuff to read
@@ -486,7 +502,7 @@ _log( " ! <<".@reading ) if $DEBUG and @reading;
 #    Send the thread ID to the client and increment (now issued) thread ID
 #    And reloop
 
-_log( " ! adding thread $NEXTTID" ) if $DEBUG;
+_log( " ! adding thread $NEXTTID" ) if DEBUG;
                 $TID2CLIENT{$NEXTTID} = $client{$client} = $client;
                 $CLIENT2TID{$client} = $NEXTTID;
                 $select->add( $client );
@@ -502,7 +518,7 @@ _log( " ! adding thread $NEXTTID" ) if $DEBUG;
             my $size = $BUFSIZ;
             unless ($toread{$client}) {
                 next unless $toread{$client} = _length( $client );
-#_log( " <$CLIENT2TID{$client} $toread{$client} length" ) if $DEBUG;
+#_log( " <$CLIENT2TID{$client} $toread{$client} length" ) if DEBUG;
                 $size -= 4;
             }
 
@@ -515,7 +531,7 @@ _log( " ! adding thread $NEXTTID" ) if $DEBUG;
             unless (defined( recv($client,$data,$size,0) ) and length($data)) {
                 _croak( "Error reading from $CLIENT2TID{$client}: $!\n" );
             }
-_log( " <$CLIENT2TID{$client} ".length($data)." of $toread{$client}" ) if $DEBUG;
+_log( " <$CLIENT2TID{$client} ".length($data)." of $toread{$client}" ) if DEBUG;
             $read{$client} .= $data;
         }
 
@@ -526,7 +542,7 @@ _log( " <$CLIENT2TID{$client} ".length($data)." of $toread{$client}" ) if $DEBUG
         while (my $client = each %read) {
             if (my $read = length( $read{$client} )) {
                 if ($read == $toread{$client}) {
-_log( " =$CLIENT2TID{$client} ".CORE::join(' ',_unpack( $read{$client} )) ) if $DEBUG;
+_log( " =$CLIENT2TID{$client} ".CORE::join(' ',_unpack( $read{$client} )) ) if DEBUG;
 
 #     Create untainted version of what we got
 #     Go handle that
@@ -560,7 +576,7 @@ _log( " =$CLIENT2TID{$client} ".CORE::join(' ',_unpack( $read{$client} )) ) if $
         while ($write) {
             my $written =
              send( $TID2CLIENT{$CLIENT2TID{$write}},$WRITE{$write},0 );
-_log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if $DEBUG;
+_log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if DEBUG;
             if (defined( $written )) {
                 if ($written == length( $WRITE{$write} )) {
                     delete( $WRITE{$write} );
@@ -586,8 +602,8 @@ _log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if $DEBUG;
             }
             $write = each %WRITE;
         }
-my $error = [$select->has_exception( .1 )] if $DEBUG;
-if ($DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
+my $error = [$select->has_exception( .1 )] if DEBUG;
+if (DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
 
 #  For all of the clients that we're done with
 #   Reloop if there is still stuff to send there
@@ -595,7 +611,7 @@ if ($DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
 
         while (my $client = each %DONEWITH) {
             next if exists( $WRITE{$client} );
-_log( " !$CLIENT2TID{$client} shutting down" ) if $DEBUG;
+_log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
             delete( $DONEWITH{$client} );
 
 #   Obtain the thread id
@@ -621,7 +637,7 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if $DEBUG;
 
 # Exit now, we're in the shared process and we've been told to exit
 
-_log( " ! global exit: did $polls polls" ) if $DEBUG;
+_log( " ! global exit: did $polls polls" ) if DEBUG;
     CORE::exit();
 } #_server
 
@@ -784,7 +800,7 @@ sub _send {
     my $frozen = _pack( @_ );
     my $length = length( $frozen );
 _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack( substr($frozen,4) )}) )
- if $DEBUG;
+ if DEBUG;
 
 # Send the data, find out how many really got sent
 # Die now if an error has occurred
@@ -825,7 +841,7 @@ sub _receive {
         if (length( $frozen ) == $length) {
             $frozen =~ m#^(.*)$#s;
             my @result = @{thaw( $1 )};
-_log( "< @{[map {$_ || ''} @result]}" ) if $DEBUG;
+_log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
             return wantarray ? @result : $result[0];
         }
         $todo -= length( $data );
@@ -1018,7 +1034,7 @@ sub _waitpid2tid {
 # If there is already a thread id for this process id, set that
 # Start waiting for the tid to arrive
 
-    goto &_pid2tid if exists $PID2TID{$_[1]};
+    return &_pid2tid if exists $PID2TID{$_[1]};
     $BLOCKING_PID2TID{$_[1]} = $_[0];
 } #_waitpid2tid
 
@@ -1389,7 +1405,7 @@ sub _isjoined {
 #---------------------------------------------------------------------------
 #  IN: 1 message to display
 
-sub _croak { goto &Carp::confess } #_croak
+sub _croak { return &Carp::confess } #_croak
 
 #---------------------------------------------------------------------------
 #  IN: 1 message to log
@@ -1605,9 +1621,11 @@ The "debug" class method allows you to (re)set a flag which causes extensive
 debugging output of the communication between threads to be output to STDERR.
 The format is still subject to change and therefore still undocumented.
 
-Debugging can also be switched on externally by giving the environment
-variable THREADS_DEBUG a true value.  The name of this environment variable
-is also still subject to change.
+Debugging can B<only> be switched on by defining the environment variable
+THREADS_DEBUG.  If the environment variable does not exist when the forks.pm
+module is compiled, then all debugging code will be optimised away to create
+a better performance.  If the environment variable has a true value, then
+debugging will also be enabled from the start.
 
 =head1 CAVEATS
 
