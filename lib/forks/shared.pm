@@ -1,10 +1,11 @@
-package threads::shared;  # yes, we're masquerading as threads::shared.pm
+package forks::shared;    # make sure CPAN picks up on forks::shared.pm
+package threads::shared;  # but we're masquerading as threads::shared.pm
 
 # Make sure we have version info for this module
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.06';
+$VERSION  = '0.07';
 $threads_shared = $threads_shared = 1;
 use strict;
 
@@ -37,8 +38,10 @@ if ($forks::threads || $forks::threads) { # twice to avoid warnings
  sub {} if 0;
 
 # Clone detection logic
+# Ordinal numbers of shared variables being locked by this thread
 
 our $CLONE = 0;
+our %LOCKED;
 
 # Do this at compile time
 #  Allow for dirty stuff in here
@@ -49,26 +52,23 @@ our $CLONE = 0;
 BEGIN {
     no strict 'refs';
     foreach my $type (qw(SCALAR ARRAY HASH)) {
-        my $name = "UNIVERSAL\:\:MODIFY_${type}_ATTRIBUTES";
+        my $name = "UNIVERSAL::MODIFY_${type}_ATTRIBUTES";
         my $old = \&$name;
 
 #   Put our own handler in there
 #    Obtain the parameters in a way we can work with
-#    If the "shared" attribute was specified
-#     Share whatever reference was specified (allows us to use the same sub)
+#    Share whatever reference was specified (if shared attribute found)
 
         *$name = sub {
             my ($package,$ref,@attribute) = @_;
-            if (grep m#^shared$#,@attribute) {
-                _share( $ref );
-            }
+            _share( $ref ) if grep m#^shared$#, @attribute;
 
 #     If there are other attributes to handle still
 #      Call the original routine with the remaining attributes
 #     Return the remaining attributes
 
             if (@attribute = grep !m#^shared$#,@attribute) {
-                $old->( $package,$ref,@attribute );
+                @attribute = $old->( $package,$ref,@attribute );
             }
             @attribute;
         } #$name
@@ -266,7 +266,7 @@ sub _share {
 # Create the reference type of that reference
 
     my $it = shift;
-    my $ref = ref($it);
+    my $ref = ref $it;
 
 # Tie the variable
 
@@ -286,7 +286,14 @@ sub _share {
 #---------------------------------------------------------------------------
 #  IN: 1..N ordinal numbers of variables to unlock
 
-sub _unlock { _command( '_unlock',@_ ) } #unlock
+sub _unlock {
+
+# Delete all of the ordinal numbers from the local list
+# Notify the remote process also
+
+    delete @LOCKED{@_};
+     _command( '_unlock',@_ );
+} #unlock
 
 #---------------------------------------------------------------------------
 #  IN: 1 remote subroutine to call
@@ -302,28 +309,47 @@ sub _remote {
 
     my $sub = shift;
     my $it  = shift;
-    my $ref = ref($it);
+    my $ref = ref $it;
     my $object;
 
 # Obtain the object
 
     if ($ref eq 'SCALAR') {
-        $object = tied( ${$it} );
+        $object = tied ${$it};
     } elsif ($ref eq 'ARRAY') {
-        $object = tied( @{$it} );
+        $object = tied @{$it};
     } elsif ($ref eq 'HASH') {
-        $object = tied( %{$it} );
+        $object = tied %{$it};
     } elsif ($ref eq 'GLOB') {
-        $object = tied( *{$it} );
+        $object = tied *{$it};
     }
 
-# Obtain the ordinal number
-# Execute the indicated subroutine for this shared variable
-# Return the variable's ordinal number
+# If there is an ordinal number (if no object, there's no number either)
+#  If we're about to lock
+#   Mark the variable as locked in this thread
+#  Else (doing something on a locked variable)
+#   Die now if the variable does not appear to be locked
 
-    my $ordinal = $object->{'ordinal'};
-    _command( $sub,$ordinal );
-    $ordinal;
+    if (my $ordinal = $object->{'ordinal'}) {
+        if ($sub eq '_lock') {
+            $LOCKED{$ordinal} = undef;
+        } else {
+            _croak( "You need a lock before you can cond$sub" )
+             if not exists $LOCKED{$ordinal};
+        }
+
+#  Execute the indicated subroutine for this shared variable
+#  Return the variable's ordinal number
+
+        _command( $sub,$ordinal );
+        return $ordinal;
+    }
+
+# Adapt sub name to what we know outside
+# No ordinal found, not shared!  Die!
+
+    $sub = $sub eq '_lock' ? 'lock' : "cond$sub";
+    _croak( "$sub can only be used on shared values" );
 } #_remote
 
 #---------------------------------------------------------------------------

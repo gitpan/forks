@@ -1,3 +1,11 @@
+0.07	27 September 2003
+	Added error detection in case lock or cond_xxx were called on unshared
+	variables or cond_xxx were called on an unlocked variable.  Added tests
+	for it in the test-suite.
+
+	Added dummy package declaration to forks::shared.pm for CPAN's sake.
+	Cleaned up the attribute handler code in forks.shared.pm a bit.
+
 0.06	27 September 2003
 	Finally grokked the documentation about attributes.  This allowed me
 	to finally write the handler for the ":shared" attribute.  Which in

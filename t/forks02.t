@@ -9,19 +9,16 @@ BEGIN {				# Magic Perl CORE pragma
 use forks; # must be done _before_ Test::More which loads real threads.pm
 use forks::shared;
 
-my $warn = ''; <<EOD;
+my $times = 100;
 
-Please note that there are some problems with testing the forks.pm module.
-Some texts with 'WHOA!' may appear on the screen, and the final result of
-the test may be inconclusive.  If all seperate tests have been successful,
-then it should be safe to install the forks.pm modules.
+diag( <<EOD );
+
+The following tests are a stress test for shared arrays and shared hashes
+that may take a few minutes on slower machines.
 
 EOD
-warn $warn if $warn;
 
 use Test::More tests => 6;
-
-my $times = 100;
 
 #= ARRAY ==============================================================
 
@@ -85,5 +82,3 @@ is( join('',%hash),'',			'check hash contents' );
 }
 
 #======================================================================
-
-warn $warn if $warn;

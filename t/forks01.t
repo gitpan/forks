@@ -9,7 +9,7 @@ BEGIN {				# Magic Perl CORE pragma
 use forks; # must be done _before_ Test::More which loads real threads.pm
 use forks::shared;
 
-my $warn = <<EOD;
+diag( <<EOD );
 
 Please note that there are some problems with testing the forks.pm module.
 Some texts with 'WHOA!' may appear on the screen, and the final result of
@@ -17,9 +17,8 @@ the test may be inconclusive.  If all seperate tests have been successful,
 then it should be safe to install the forks.pm modules.
 
 EOD
-warn $warn if $warn;
 
-use Test::More tests => 53;
+use Test::More tests => 57;
 use strict;
 use warnings;
 
@@ -184,6 +183,20 @@ is( join('',sort keys %hash),'ac',	'check hash keys' );
 cmp_ok( scalar(keys %hash),'==',0,	'check number of elements' );
 is( join('',keys %hash),'',		'check hash fetch' );
 
-#===================================================================
+#== errors =========================================================
 
-warn $warn if $warn;
+my $foo;
+eval {lock $foo};
+like( $@,qr#^lock can only be used on shared values#,'check unshared var' );
+
+my $bar : shared;
+eval {cond_wait $bar};
+like( $@,qr#^You need a lock before you can cond_wait#,'check unlocked var' );
+
+eval {lock $bar};
+is( $@,'','check locking shared var' );
+
+eval {lock $bar; cond_signal $bar};
+is( $@,'','check locking and signalling shared var' );
+
+#===================================================================
