@@ -6,11 +6,55 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.03';
+$VERSION = '0.04';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
 
+
+#---------------------------------------------------------------------------
+# If we're running in a perl before 5.8.0, we need a source filter to change
+# all occurrences of
+#
+#  share( $x );
+#
+# to:
+#
+#  share( \$x );
+#
+# The same applies for lock(), cond_wait(), cond_signal() and cond_broadcast().
+#
+# We do this by conditionally adding the source filter functionality if we're
+# running in a versione before 5.8.0.
+
+my $filtering; # are we filtering source code?
+BEGIN {
+    eval <<'EOD' if ($filtering = $] < 5.008); # need string eval ;-(
+
+use Filter::Util::Call; # get the source filter stuff
+
+#---------------------------------------------------------------------------
+#  IN: 1 object (not used)
+# OUT: 1 status
+
+sub filter {
+
+# Initialize status
+# If there are still lines to read
+#  Convert the line if there is any mention of our special subs
+# Return the status
+
+    my $status;
+    if (($status = filter_read()) > 0) {
+#warn $_ if			# activate if we want to see changed lines
+        s#(\b(?:cond_broadcast|cond_wait|cond_signal|share|lock)\b\s*(?!{)\(?\s*)(?=[mo\$\@\%])#$1\\#sg;
+    }
+    $status;
+} #filter
+EOD
+} #BEGIN
+
+#---------------------------------------------------------------------------
 # Load only the stuff that we really need
 
 use load;
@@ -312,13 +356,17 @@ sub async (&;@) { threads->new( @_ ) } #async
 
 sub forks::import {
 
-# Lose the class
+# Obtain the class
+# Add filter if we're filtering
+
+    my $self = shift;
+    filter_add( bless {},$self ) if $filtering;
+
 # If there seems to be a threads.pm loaded
 #  Die if it really was a 'use threads'
 #  Perform the export needed 
 #  And return
 
-    shift;
     if (my $threads = $INC{'threads.pm'}) {
         _croak( "Can not mix 'use forks' with real 'use threads'\n" )
          unless $threads eq $INC{'forks.pm'};
@@ -593,7 +641,7 @@ sub _export {
 #  Lose the parameter
 
     my $namespace = shift().'::';
-    if ($_[0] eq 'debug') {
+    if (defined( $_[0] ) and $_[0] eq 'debug') {
         $DEBUG = 1;
         shift;
     }
@@ -1440,8 +1488,9 @@ L<isthread>).  This is as yet untested within Apache, but should work.
 
 You should be able to run threaded applications unchanged by simply making
 sure that the "forks.pm" and "forks::shared.pm" modules are loaded, e.g. by
-specifying them on the command line.  This doesn't work still because the
-: shared attribute has not yet been implemented.
+specifying them on the command line.  This still doesn't work for all source
+code because the C<: shared> attribute has not yet been implemented.  Patches
+for this are welcomed.
 
 =head2 development / demonstration tool
 
@@ -1451,15 +1500,14 @@ to.  Just download the "forks.pm" package from CPAN and install that.  So
 the threshold for trying out threads in Perl has become much lower.  Even
 Perl 5.005 should in principle be able to support the forks.pm module: because
 of some issues with regards to the availability of XS features between
-different versions of Perl, it seems that 5.8.0 (unthreaded) is what you need
+different versions of Perl, it seems that 5.6.0 (unthreaded) is what you need
 at least.
 
 =head1 IMPLEMENTATION
 
-This is the very first version that I'm making public.  There is still a lot
-to do, but the basic functionalities seem to work.  The missing pieces are
-just a matter of programming.  If you would like to participate in this,
-please do!
+There are still a lot of things to do, but the basic functionalities seem to
+work.  The missing pieces are just a matter of programming.  If you would like
+to participate in this, please do!  Patches are welcome!
 
 This version is mostly written in Perl.  Inter-process communication
 is done by using sockets, with the process that stores the shared variables
@@ -1505,10 +1553,22 @@ The format is still subject to change and therefore still undocumented.
 
 =head1 CAVEATS
 
+Some caveats that you need to be aware of.
+
+=head2 Greater latency
+
 Because of the use of sockets for inter-thread communication, there is an
 inherent larger latency with the interaction between threads.  However, the
 fact that sockets are used, may open up the possibility to share threads
 over more than one physical machine.
+
+=head2 Source filter
+
+To get forks.pm working on Perl 5.6.x, it was necessary to use a source
+filter to ensure a smooth upgrade path from using forks under Perl 5.6.x to
+Perl 5.8.x and higher.  The source filter used is pretty simple and may
+prove to be too simple.  Please report any problems that you may find when
+running under 5.6.x.
 
 =head1 KNOWN PROBLEMS
 
@@ -1518,18 +1578,24 @@ These problems are known and will be fixed in the future:
 
 =item test-suite exits in a weird way
 
-Although there are no errors in the test-suite, the test harness thinks there
-is something wrong because of an unexpected exit() value.  Not sure what to do
-about this yet.
+Although there are no errors in the test-suite, the test harness sometimes
+thinks there is something wrong because of an unexpected exit() value.  Not
+sure what to do about this yet.
 
 =back
 
 =head1 CREDITS
 
+Juerd Waalboer for pointing me to the source filter solution for Perl 5.6.x.
+
+Bradley W. Langhorst for making sure everything runs with warnings enabled.
+
 Lars Fenneberg for helping me through the initial birthing pains.
 
 Arthur Bergman for implementing the first working version of Perl threads
 support and providing us with an API to build on.
+
+And all the other people reporting problems.
 
 =head1 AUTHOR
 
@@ -1539,7 +1605,7 @@ Please report bugs to <perlbugs@dijkmat.nl>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
 reserved.  This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

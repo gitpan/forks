@@ -1,3 +1,22 @@
+0.04	10 August 2003
+	Implemented .xs file munging and source-filter to be able to truly
+	support forks.pm under Perl 5.6.x.  Thanks to Juerd Waalboer for the
+	idea of the source filter.
+
+	It is now confirmed that forks.pm won't work under 5.005, so the
+	minimum version of Perl is now set to 5.6.0 in the Makefile.PL.
+	
+	7 August 2003
+	Tested under 5.8.1-RC4.  The WHOA! messags seem to have disappeared
+	but instead a warning has appeared that cannot be suppressed.  This
+	was caused by my attempt to activate the :shared attribute.  Since
+	that doesn't work anyway, I removed the offending code and the
+	warning went away.
+
+	Fixed some warnings in the test-suite.
+
+	Fixed another warning in forks.pm.  Reported by Bradley W. Langhorst.
+
 0.03	2 April 2003
 	Fixed a warning in forks.pm.  Reported by Bradley W. Langhorst.
 

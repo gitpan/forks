@@ -31,6 +31,7 @@ isa_ok( $tied,'threads::shared',	'check object type' );
 
 my @thread;
 share( my $count );
+$count  = 0;
 push( @thread,threads->new( sub {
     while (1) {
         {lock( $count );
@@ -59,6 +60,7 @@ isa_ok( $tied,'threads::shared',	'check object type' );
 
 my @thread;
 share( my $count );
+$count = 0;
 push( @thread,threads->new( sub {
     while (1) {
         {lock( $count );

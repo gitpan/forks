@@ -14,3 +14,4 @@ lib/threads/shared/hash.pm
 lib/threads/shared/handle.pm
 t/forks01.t
 t/forks02.t
+META.yml                                Module meta-data (added by MakeMaker)

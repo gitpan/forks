@@ -13,7 +13,6 @@ has some significant differences:
 - it is more efficient in the startup of threads
 - it is less efficient in the stopping of threads
 - it is less efficient in inter-thread communication
-- it is all still Pure Perl (tm)
 
 If for nothing else, it allows you to test out the Perl threading model,
 even in older versions of Perl (you do _not_ require 5.8.0 for this).
