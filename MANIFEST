@@ -1,0 +1,16 @@
+MANIFEST
+CHANGELOG
+README
+TODO
+VERSION
+Makefile.PL
+forks.xs
+ppport.h
+lib/forks.pm
+lib/forks/shared.pm
+lib/threads/shared/scalar.pm
+lib/threads/shared/array.pm
+lib/threads/shared/hash.pm
+lib/threads/shared/handle.pm
+t/forks01.t
+t/forks02.t

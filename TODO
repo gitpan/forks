@@ -1,0 +1,12 @@
+Add a real test-suite.
+
+push with a shared scalar bombs:
+ push( @shared,$shared );    # bombs
+ push( @shared,$shared.'' ); # works
+Haven't got a clue why.
+
+optimizations:
+- Storable::freeze/thaw not always needed: check Thread::Serialize
+- change remote function names to command numbers
+- allow for unix domain sockets as transport medium
+- allow for shared memory as transport medium (how will we fix blocking?)
