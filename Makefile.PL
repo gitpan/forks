@@ -36,6 +36,7 @@ WriteMakefile (
 
  PREREQ_PM	=> {@extra_prereq,qw(
 		    Test::More		0
+		    Scalar::Util	1.01
 		    Storable		0
 		    load		0.11
                    )},

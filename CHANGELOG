@@ -1,10 +1,22 @@
+0.08	24 October 2003
+	Shared entities that were also blessed as an object, were not
+	correctly handled (ref() versus Scalar::Util::reftype() ).  Spotted
+	by Jack Steadman.  Now fixed by using reftype() rather than ref().
+
+	Dependency on Scalar::Util added (not sure when that became core).
+	Added tests to excercise Thread::Queue (if available).
+
+	10 October 2003
+	Changed async() to make it a little faster by removing an extra call
+	from the stack.
+
 0.07	27 September 2003
 	Added error detection in case lock or cond_xxx were called on unshared
 	variables or cond_xxx were called on an unlocked variable.  Added tests
 	for it in the test-suite.
 
 	Added dummy package declaration to forks::shared.pm for CPAN's sake.
-	Cleaned up the attribute handler code in forks.shared.pm a bit.
+	Cleaned up the attribute handler code in forks::shared.pm a bit.
 
 0.06	27 September 2003
 	Finally grokked the documentation about attributes.  This allowed me

@@ -1,4 +1,7 @@
-add a test to excersize inter-thread locking
+add a test to excercise inter-thread locking
+
+move source filter from forks.pm to forks::shared.pm, although I doubt that
+there will be many cases where forks would only be used.
 
 push with a shared scalar bombs:
  push( @shared,$shared );    # bombs
@@ -10,3 +13,6 @@ optimizations:
 - change remote function names to command numbers: less traffic, no Storable?
 - allow for unix domain sockets as transport medium
 - allow for shared memory as transport medium (how will we fix blocking?)
+
+Global destruction sometimes causes strange errors when threads are still
+running.  Need a way to check for that.

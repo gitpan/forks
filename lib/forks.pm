@@ -6,11 +6,10 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.07';
+$VERSION = '0.08';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
-
 
 #---------------------------------------------------------------------------
 # If we're running in a perl before 5.8.0, we need a source filter to change
@@ -344,7 +343,7 @@ sub equal { $_[0]->tid == $_[1]->tid } #equal
 #      2..N any parameters to be passed
 # OUT: 1 instantiated object
 
-sub async (&;@) { threads->new( @_ ) } #async
+sub async (&;@) { unshift @_,'threads'; goto &new } #async
 
 #---------------------------------------------------------------------------
 
