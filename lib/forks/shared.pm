@@ -5,7 +5,7 @@ package threads::shared;  # but we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.11';
+$VERSION  = '0.12';
 $threads_shared = $threads_shared = 1;
 use strict;
 
@@ -436,7 +436,7 @@ Please report bugs to <perlbugs@dijkmat.nl>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+Copyright (c) 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
 reserved.  This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

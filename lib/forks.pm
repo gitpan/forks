@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.11';
+$VERSION = '0.12';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -132,15 +132,17 @@ my $DEBUG = $ENV{'THREADS_DEBUG'};
 # Initialize hash (key: fq sub) with code references to tie subroutines
 # List with objects of shared (tied) variables
 # Ordinal number of next shared (tied) variable
+
+my %DISPATCH;
+my @TIED;
+my $NEXTTIED = 1;
+
 # Initialize list (key: ordinal) of threads that have the lock for a variable
 # Initialize list (key: ordinal) of threads that have a recursive lock
 # Initialize list (key: ordinal) of threads that want to lock a variable
 # Initialize list (key: ordinal) of threads are waiting in cond_wait
 # Initialize list (key: ordinal) of variables that have been signalled
 
-my %DISPATCH;
-my @TIED;
-my $NEXTTIED = 1;
 my @LOCKED;
 my @RECURSED;
 my @LOCKING;
@@ -679,7 +681,7 @@ sub _init_thread {
 # Die now if it is the wrong type of message
 # Set the tid 
 # Send the command to register the pid (in the meantime we're doing other stuff)
-# Execute all of the CLONE subroutines if this is not the base thread
+# Execute all of the CLONE subroutines if not in the base thread
 
     my @param = _receive( $QUERY );
     _croak( "Received '$param[0]' unexpectedly\n" ) if $param[0] ne '_set_tid';
@@ -1293,13 +1295,15 @@ sub _unlock_ordinal {
         $SIGNALLED[$ordinal] = undef;
     }
 
-# If there is a thread id for the lock, take from locking list if none yet
+# Obtain thread id from locking list if there is no thread id yet
+# If there is a thread id for the lock
 #  Make that the thread locking the variable
 #  And have that thread continue
 # Else (still no thread wanting to lock)
 #  Just reset the lock for this variable
 
-    if (defined( $tid ||= shift(@{$LOCKING[$ordinal]}) )) {
+    $tid = shift(@{$LOCKING[$ordinal]}) unless defined $tid;
+    if (defined $tid){
         $LOCKED[$ordinal] = $tid;
         $WRITE{$TID2CLIENT{$tid}} = $true;
     } else {
@@ -1527,10 +1531,6 @@ at least.
 
 =head1 IMPLEMENTATION
 
-There are still a lot of things to do, but the basic functionalities seem to
-work.  The missing pieces are just a matter of programming.  If you would like
-to participate in this, please do!  Patches are welcome!
-
 This version is mostly written in Perl.  Inter-process communication
 is done by using sockets, with the process that stores the shared variables
 as the server and all the processes that function as threads, as clients.
@@ -1592,6 +1592,16 @@ Perl 5.8.x and higher.  The source filter used is pretty simple and may
 prove to be too simple.  Please report any problems that you may find when
 running under 5.6.x.
 
+=head1 TODO
+
+Some things need to be done still: Perl 5.8.3 threads supports some extra
+features that still need to be implemented.  And possibly it would be an
+idea to add the feature to transparently bless across threads (which is
+promised in the documentation of threads.pm, but which I personally don't
+see happening before Ponie and/or Perl 6 comes around).
+
+And of course, there might still be bugs in there.  Patches are welcome!
+
 =head1 KNOWN PROBLEMS
 
 These problems are known and will be fixed in the future:
@@ -1604,20 +1614,50 @@ Although there are no errors in the test-suite, the test harness sometimes
 thinks there is something wrong because of an unexpected exit() value.  Not
 sure what to do about this yet.
 
+=item share() doesn't lose value for arrays and hashes
+
+In the standard Perl threads implementation, arrays and hashes are
+re-initialized when they become shared (with the share()) function.  The
+share() function of forks::shared does B<not> initialize arrays and hashes
+when they become shared with the share() function.
+
+This B<could> be considered a bug in the standard Perl implementation.  In any
+case this is an inconsistency of the behaviour of threads.pm and forks.pm.
+Maybe a special "totheletter" option should be added to forks.pm to make
+forks.pm follow this behaviour of threads.pm to the letter.
+
 =back
 
 =head1 CREDITS
 
-Juerd Waalboer for pointing me to the source filter solution for Perl 5.6.x.
+All the people reporting problems and fixes.  More specifically in
+alphabetical order:
 
-Bradley W. Langhorst for making sure everything runs with warnings enabled.
+=over 2
 
-Lars Fenneberg for helping me through the initial birthing pains.
+=item Stephen Adkins
 
-Arthur Bergman for implementing the first working version of Perl threads
-support and providing us with an API to build on.
+For finding that a child thread could not wake the very first parent thread
+with cond_signal, and providing a patch to fix it.
 
-And all the other people reporting problems.
+=item Arthur Bergman
+
+For implementing the first working version of Perl threads support and
+providing us with an API to build on.
+
+=item Lars Fenneberg
+
+For helping me through the initial birthing pains.
+
+=item Bradley W. Langhorst
+
+For making sure everything runs with warnings enabled.
+
+=item Juerd Waalboer
+
+For pointing me to the source filter solution for Perl 5.6.x.
+
+=back
 
 =head1 AUTHOR
 
@@ -1627,7 +1667,7 @@ Please report bugs to <perlbugs@dijkmat.nl>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+Copyright (c) 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
 reserved.  This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

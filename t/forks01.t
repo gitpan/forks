@@ -18,7 +18,7 @@ then it should be safe to install the forks.pm modules.
 
 EOD
 
-use Test::More tests => 57;
+use Test::More tests => 58;
 use strict;
 use warnings;
 
@@ -198,5 +198,14 @@ is( $@,'','check locking shared var' );
 
 eval {lock $bar; cond_signal $bar};
 is( $@,'','check locking and signalling shared var' );
+
+#== fixed bugs =====================================================
+
+my $zoo : shared;
+my $thread = threads->new( sub { sleep 5; lock( $zoo ); cond_signal( $zoo ) } );
+lock( $zoo );
+cond_wait( $zoo );
+ok( 1, "We've come back from the thread!" );
+$thread->join;
 
 #===================================================================

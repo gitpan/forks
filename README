@@ -1,9 +1,5 @@
 README for forks
 
-Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
-reserved.  This program is free software; you can redistribute it and/or
-modify it under the same terms as Perl itself.
-
 The forks.pm module is a drop-in replacement for threads.pm.  It has the
 same syntax as the threads.pm module (it even takes over its namespace) but
 has some significant differences:
@@ -15,7 +11,11 @@ has some significant differences:
 - it is less efficient in inter-thread communication
 
 If for nothing else, it allows you to test out the Perl threading model,
-even in older versions of Perl (you do _not_ require 5.8.0 for this).
+even in older versions of Perl (5.6.0 and higher are supported)
+
+Copyright (c) 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+reserved.  This program is free software; you can redistribute it and/or
+modify it under the same terms as Perl itself.
 
 Required Modules:
  Devel::Required (any)
