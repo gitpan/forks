@@ -4,15 +4,17 @@ package threads::shared;  # yes, we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.01';
+$VERSION  = '0.02';
 $threads_shared = $threads_shared = 1;
 use strict;
 
 # Load only the stuff that we really need
 # Make sure we can die with lots of information
+# Activate the :shared keyword
 
 use load;
 use Carp ();
+use Attribute::Handlers autotie => { 'UNIVERSAL::shared' => 'threads::shared' };
 
 # If forks.pm is loaded
 #  Make sure we have a local copy of the base command handler on the client side

@@ -122,7 +122,7 @@ splice( @array,0,3,qw(d e f) );
 is( join('',@array),'defdefghi',	'check array fetch' );
 
 delete( $array[0] );
-is( join('',@array),'efdefghi',		'check array fetch' );
+is( join('',map {$_ || ''} @array),'efdefghi',		'check array fetch' );
 
 @array = qw(a b c d e f g h i);
 is( join('',@array),'abcdefghi',	'check array fetch' );
@@ -133,7 +133,7 @@ ok( !exists( $array[9] ),		'check whether array element exists' );
 
 $#array = 10;
 cmp_ok( scalar(@array),'==',11,		'check number of elements' );
-is( join('',@array),'abcdefghi',	'check array fetch' );
+is( join('',map {$_ || ''} @array),'abcdefghi',	'check array fetch' );
 
 ok( !exists( $array[10] ),		'check whether array element exists' );
 $array[10] = undef;

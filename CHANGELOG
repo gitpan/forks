@@ -1,3 +1,13 @@
+0.02	17 January 2003
+	Added dummy -package forks- to forks.pm to fool CPAN into thinking
+	it really is the forks.pm module, when in fact it is of course
+	threads.pm.
+
+	Fixed some warnings in t/forks01.t.
+
+	28 October 2002
+	Made sure length packing uses Network order.
+
 0.01	27 October 2002
 	First public version of forks.pm.  Thanks to Lars Fenneberg for all
 	the help so far.

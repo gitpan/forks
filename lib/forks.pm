@@ -1,11 +1,12 @@
-package threads; # yes, we're masquerading as threads.pm
+package forks;   # make sure CPAN picks up on forks.pm
+package threads; # but in fact we're masquerading as threads.pm
 
 # Make sure we have version info for this module
 # Set flag to indicate that we're really the original threads implementation
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -454,7 +455,7 @@ _log( " ! adding thread $NEXTTID" ) if $DEBUG;
 
             my $size = $BUFSIZ;
             unless ($toread{$client}) {
-                next unless $toread{$client} = _length( $client,1 );
+                next unless $toread{$client} = _length( $client );
 #_log( " <$CLIENT2TID{$client} $toread{$client} length" ) if $DEBUG;
                 $size -= 4;
             }
@@ -558,7 +559,7 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if $DEBUG;
 
 _log( " ! global exit: did $polls polls" ) if $DEBUG;
     CORE::exit();
-} #forks::import
+} #_server
 
 #---------------------------------------------------------------------------
 #  IN: 1 socket to put into nonblocking mode
@@ -656,7 +657,7 @@ sub _pack {
 # Calculate the length, pack it and return it with the frozen stuff
 
     my $frozen = freeze( \@_ );
-    pack( 'L',length( $frozen ) ).$frozen;
+    pack( 'N',length( $frozen ) ).$frozen;
 } #_pack
 
 #---------------------------------------------------------------------------
@@ -686,7 +687,7 @@ sub _length {
     my $result = recv( $client,$length,4,0 );
     if (defined( $result )) {
         if (length( $length ) == 4) {
-            return unpack( 'L',$length );
+            return unpack( 'N',$length );
         } elsif (length( $length ) == 0) {
             return 0 if shift;
 	}
@@ -1481,6 +1482,7 @@ by the "forks" threads implementation.
 
  unless (fork) {
    threads->isthread; # this process is a detached thread now
+   exit;              # can not return values, as thread is detached
  }
 
 The "isthread" class method attempt to make a connection with the shared
