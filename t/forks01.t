@@ -6,6 +6,8 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
+BEGIN {delete $ENV{THREADS_DEBUG}} # no debugging during testing!
+
 use forks; # must be done _before_ Test::More which loads real threads.pm
 use forks::shared;
 
@@ -202,10 +204,16 @@ is( $@,'','check locking and signalling shared var' );
 #== fixed bugs =====================================================
 
 my $zoo : shared;
-my $thread = threads->new( sub { sleep 5; lock( $zoo ); cond_signal( $zoo ) } );
+my $thread = threads->new( sub { sleep 2; lock( $zoo ); cond_signal( $zoo ) } );
 lock( $zoo );
 cond_wait( $zoo );
 ok( 1, "We've come back from the thread!" );
 $thread->join;
+
+#$thread = threads->new( sub { sleep 2; cond_signal( $zoo ) } );
+#lock( $zoo );
+#cond_wait( $zoo );
+#ok( 1, "We've come back from the thread!" );
+#$thread->join;
 
 #===================================================================

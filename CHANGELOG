@@ -1,3 +1,15 @@
+0.13	4 January 2004
+	Looked at fixing the problem with signalling unlocked variables.
+	Unfortunately, there does not seem to be a quick solution.  Need to
+	abandon this idea right now until I have more time.  Updated
+	documentation to let the world know there is an inconsistency.
+
+	Documented the THREADS_DEBUG environment variable and made sure it is
+	unset during testing.
+
+	Updated ppport.h to 2.009.  Didn't expect any problems with 5.8.1,
+	but you never know.
+
 0.12	2 January 2004
 	Fixed problem with signalling thread 0.  Spotted by Stephen Adkins.
 

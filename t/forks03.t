@@ -6,6 +6,8 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
+BEGIN {delete $ENV{THREADS_DEBUG}} # no debugging during testing!
+
 use forks; # must be done _before_ Test::More which loads real threads.pm
 use forks::shared;
 use Config;

@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.12';
+$VERSION = '0.13';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -1314,7 +1314,7 @@ sub _unlock_ordinal {
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
 #      2 ordinal number of variable to start waiting for
-#      3 function to show when there is an error (undef: no error if wrong)
+#      3 function name to show when there is an error (undef: no error if wrong)
 # OUT: 1 ordinal number of variable
 #      2 thread id that keeps it locked
 
@@ -1333,7 +1333,7 @@ sub _islocked {
     my $ordinal = shift;
     if ($tid != $LOCKED[$ordinal]) {
         return unless $_[0];
-        _croak( "Must first lock variable #$ordinal ($tid != $LOCKED[$ordinal]) before doing a ".shift );
+        _croak( "Must first lock variable #$ordinal ($tid != $LOCKED[$ordinal]) before doing a $_[0]" );
     }
     wantarray ? ($ordinal,$tid) : $ordinal;
 } #_islocked
@@ -1573,6 +1573,10 @@ The "debug" class method allows you to (re)set a flag which causes extensive
 debugging output of the communication between threads to be output to STDERR.
 The format is still subject to change and therefore still undocumented.
 
+Debugging can also be switched on externally by giving the environment
+variable THREADS_DEBUG a true value.  The name of this environment variable
+is also still subject to change.
+
 =head1 CAVEATS
 
 Some caveats that you need to be aware of.
@@ -1604,9 +1608,17 @@ And of course, there might still be bugs in there.  Patches are welcome!
 
 =head1 KNOWN PROBLEMS
 
-These problems are known and will be fixed in the future:
+These problems are known and will hopefully be fixed in the future:
 
 =over 2
+
+=item signalling unlocked variables
+
+In the standard Perl ithreads implementation, you can signal a variable without
+having to lock() it.  This causes a (suppressable) warning.  Due to
+implementation details, probably having to do with communication getting out
+of sync between server and client thread, forks.pm needs to die when this
+happens.  Patches are welcome.
 
 =item test-suite exits in a weird way
 
