@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.14';
+$VERSION = '0.15';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -1508,6 +1508,17 @@ forks - drop-in replacement for Perl threads using fork()
 The "forks" pragma allows a developer to use threads without having to have
 a threaded perl, or to even run 5.8.0 or higher.  There were a number of goals
 that I am trying to reach with this implementation.
+
+=over 2
+
+Using this module B<only> makes sense if you run on a system that has an
+implementation of the C<fork> function by the Operating System.  Windows
+is currently the only known system on which Perl runs which does B<not>
+have an implementation of C<fork>.  Therefore, it B<doesn't> make any
+sense to use this module on a Windows system.  And therefore, a check is
+made during installation barring you from installing on a Windows system.
+
+=back
 
 =head2 memory usage
 

@@ -1,3 +1,9 @@
+0.15	14 January 2004
+	Just got too much mail from people attempting to use forks.pm on
+	Windows.  Decided to add check for Win32 to Makefile.PL to have it
+	die when attempting to run on Windows.  Added documentation to
+	explain this.
+
 0.14	7 January 2004
 	Removed dependency on load.pm: it really doesn't make sense in a
 	forked environment: I don't know what I was thinking in that respect.

@@ -1,4 +1,10 @@
 require 5.006;
+
+BEGIN {
+    die "Doesn't make sense to install 'forks' on this system.\n"
+     if ($^O =~ m#Win32# or $ENV{THIS_IS_WIN32});
+} #BEGIN
+
 use strict;
 use ExtUtils::MakeMaker;
 eval "use Devel::Required";
