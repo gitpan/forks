@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.13';
+$VERSION = '0.14';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
@@ -54,9 +54,6 @@ EOD
 } #BEGIN
 
 #---------------------------------------------------------------------------
-# Load only the stuff that we really need
-
-use load;
 
 # Load the XS stuff
 
@@ -70,7 +67,7 @@ XSLoader::load( 'forks',$threads::VERSION );
 # Make sure that we can freeze and thaw data structures
 
 use Carp       ();
-use IO::Socket qw(SOCK_STREAM);
+use IO::Socket ();
 use IO::Select ();
 use POSIX      qw(BUFSIZ EWOULDBLOCK O_NONBLOCK F_GETFL F_SETFL);
 use Storable   qw(freeze thaw);
@@ -556,6 +553,8 @@ _log( " =$CLIENT2TID{$client} ".CORE::join(' ',_unpack( $read{$client} )) ) if $
 #     Remove what was written, still left for next time
 #    Else (something seriously wrong)
 #     Die now
+#   Else (something seriously wrong
+#    Die now
 #   Fetch the next client to write to
 
         while ($write) {
@@ -565,11 +564,25 @@ _log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if $DEBUG;
             if (defined( $written )) {
                 if ($written == length( $WRITE{$write} )) {
                     delete( $WRITE{$write} );
-                } elsif ($! == EWOULDBLOCK) {
-                    substr( $WRITE{$write},0,$written ) = '';
+
+#***************************************************************************
+# For some reason, attempting to write too much does _not_ set $! to
+# EWOULDBLOCK, instead it appears to always be 0.  For now we'll assume
+# that if not everything was written but the write itself was successful
+# (i.e, $written is defined) that we should attempt to send the rest again.
+# The croak that was in the else clause, can now never happen and is
+# therefore disabled for now.
+
+#                } elsif ($! == EWOULDBLOCK) {
                 } else {
-                    _croak( "Could not write all data to $CLIENT2TID{$write}: $!\n" );
+                    substr( $WRITE{$write},0,$written ) = '';
+#                } else {
+#                    _croak( "Could not write all data to $CLIENT2TID{$write}: $!\n" );
                 }
+#***************************************************************************
+
+            } else {
+                _croak( "Could not write ".(length $WRITE{$write})." bytes to $CLIENT2TID{$write}: $!\n" );
             }
             $write = each %WRITE;
         }
@@ -674,7 +687,6 @@ sub _init_thread {
     $QUERY = IO::Socket::INET->new(
      PeerAddr => '127.0.0.1',
      PeerPort => $PORT,
-     Type     => SOCK_STREAM,
     ) or _croak( "Couldn't connect to query server: $@\n" );
 
 # Obtain the initial message from the query server
@@ -797,20 +809,26 @@ sub _receive {
 # Initialize the data to be received
 
     my $client = shift;
-    my $length = _length( $client );
+    my $length = my $todo = _length( $client );
     my $frozen;
 
-# If we successfully get all data
-#  Untaint what we got
-#  Obtain any parameters if possible
-#  Return the result
+# While we successfully get all data
+#  Add what we got this time
+#  If we got it all
+#   Untaint what we got
+#   Obtain any parameters if possible
+#   Return the result
+#  Set up for next attempt to fetch
 
-    if (defined( recv( $client,$frozen,$length,0 ) )
-        and length( $frozen ) == $length) {
-        $frozen =~ m#^(.*)$#s;
-        my @result = @{thaw( $1 )};
+    while (defined recv( $client,my $data,$todo,0 )) {
+        $frozen .= $data;
+        if (length( $frozen ) == $length) {
+            $frozen =~ m#^(.*)$#s;
+            my @result = @{thaw( $1 )};
 _log( "< @{[map {$_ || ''} @result]}" ) if $DEBUG;
-        return wantarray ? @result : $result[0];
+            return wantarray ? @result : $result[0];
+        }
+        $todo -= length( $data );
     }
 
 # Die now (we didn't get the data)
@@ -1382,6 +1400,7 @@ sub _log {
 # If it is a thread message
 #  Obtain the thread id
 #  Prefix thread id value
+# Shorten message if _very_ long
 # Log it
 
     my $message = shift;
@@ -1389,6 +1408,8 @@ sub _log {
         my $tid = defined($TID) ? $TID : '?';
         $message = "$tid $message";
     }
+    $message = substr($message,0,256)."... (".(length $message)." bytes)"
+     if length( $message ) > 256;
     print STDERR "$message\n";
 }#_log
 
@@ -1525,7 +1546,7 @@ at least.
 =head1 REQUIRED MODULES
 
  Devel::Required (any)
- load (0.11)
+ IO::Socket (1.18)
  Scalar::Util (1.01)
  Storable (any)
 
@@ -1660,6 +1681,10 @@ providing us with an API to build on.
 =item Lars Fenneberg
 
 For helping me through the initial birthing pains.
+
+=item Paul Golds
+
+For spotting a problem with very large shared scalar values.
 
 =item Bradley W. Langhorst
 

@@ -16,3 +16,7 @@ optimizations:
 
 Global destruction sometimes causes strange errors when threads are still
 running.  Need a way to check for that.
+
+Signalling unlocked variables should become possible.  Maybe lock() the
+variable before signalling?  Probably not.  Simply taking away the check for
+the lock causes a deadlock at the moment, so that doesn't make much sense.

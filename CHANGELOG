@@ -1,3 +1,14 @@
+0.14	7 January 2004
+	Removed dependency on load.pm: it really doesn't make sense in a
+	forked environment: I don't know what I was thinking in that respect.
+
+	Added dependency on IO::Socket 1.18: we do need auto-flushing sockets
+	(which seems to be pretty standard nowadays, but just to make sure).
+
+	Fixed problem with large values / structures being passed with some
+	help from Jan-Pieter Cornet at the Amsterdam PM Meeting.  Spotted by
+	Paul Golds.  Added test for it.
+
 0.13	4 January 2004
 	Looked at fixing the problem with signalling unlocked variables.
 	Unfortunately, there does not seem to be a quick solution.  Need to

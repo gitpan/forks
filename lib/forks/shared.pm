@@ -5,15 +5,13 @@ package threads::shared;  # but we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.13';
+$VERSION  = '0.14';
 $threads_shared = $threads_shared = 1;
 use strict;
 
-# Load only the stuff that we really need
 # Make sure we can die with lots of information
 # Make sure we can find out about blessed references correctly
 
-use load;
 use Carp ();
 use Scalar::Util qw(reftype);
 

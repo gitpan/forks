@@ -39,6 +39,6 @@ WriteMakefile (
 		    Devel::Required     0
 		    Scalar::Util	1.01
 		    Storable		0
-		    load		0.11
+                    IO::Socket          1.18
                    )},
 );

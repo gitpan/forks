@@ -19,7 +19,7 @@ modify it under the same terms as Perl itself.
 
 Required Modules:
  Devel::Required (any)
- load (0.11)
+ IO::Socket (1.18)
  Scalar::Util (1.01)
  Storable (any)
 

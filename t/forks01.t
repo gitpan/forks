@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl -T -w
+#!/usr/local/bin/perl -w
 BEGIN {				# Magic Perl CORE pragma
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
@@ -20,7 +20,7 @@ then it should be safe to install the forks.pm modules.
 
 EOD
 
-use Test::More tests => 58;
+use Test::More tests => 60;
 use strict;
 use warnings;
 
@@ -204,15 +204,28 @@ is( $@,'','check locking and signalling shared var' );
 #== fixed bugs =====================================================
 
 my $zoo : shared;
-my $thread = threads->new( sub { sleep 2; lock( $zoo ); cond_signal( $zoo ) } );
-lock( $zoo );
-cond_wait( $zoo );
-ok( 1, "We've come back from the thread!" );
-$thread->join;
+my $thread = threads->new( sub { sleep 2; lock $zoo; cond_signal $zoo; 1} );
+{
+    lock $zoo;
+    cond_wait $zoo;
+    ok( 1, "We've come back from the thread!" );
+}
+ok( $thread->join,"Check if came back correctly from thread" );
 
-#$thread = threads->new( sub { sleep 2; cond_signal( $zoo ) } );
-#lock( $zoo );
-#cond_wait( $zoo );
+{
+    lock $zoo;
+    my $data = 'x' x 100000;
+    $thread = threads->new( sub {
+        lock $zoo;
+        return $zoo eq $data;
+    } );
+    $zoo = $data;
+}
+ok( $thread->join,"Check if it was the same inside the thread\n" );
+
+#$thread = threads->new( sub { sleep 2; cond_signal $zoo} );
+#lock $zoo;
+#cond_wait $zoo;
 #ok( 1, "We've come back from the thread!" );
 #$thread->join;
 

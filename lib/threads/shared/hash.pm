@@ -3,22 +3,12 @@ package threads::shared::hash;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.13';
+$VERSION = '0.14';
 use strict;
-
-# Load only the stuff that we really need
-
-use load;
 
 # Satisfy -require-
 
 1;
-
-#---------------------------------------------------------------------------
-
-# Following subroutines are loaded on demand only
-
-__END__
 
 #---------------------------------------------------------------------------
 
