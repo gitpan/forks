@@ -37,7 +37,7 @@ chmod 0444, $old  or die "Could not change permissions on $old\n";
 
 WriteMakefile (
  NAME		=> "forks",
- AUTHOR		=> 'Elizabeth Mattijsen (liz@dijkmat.nl)',
+ AUTHOR		=> 'Eric Rybski (rybskej@yahoo.com)',
  ABSTRACT	=> 'forks - simulate threads with fork',
  VERSION_FROM	=> 'lib/forks.pm',
 

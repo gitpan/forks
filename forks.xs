@@ -90,7 +90,7 @@ void
 lock(SV *ref)
     PROTOTYPE: \[$@%]
     PPCODE:
-	int count;
+    int count;
         U16 ordinal;
         U16 process;
 
@@ -112,7 +112,7 @@ lock(SV *ref)
         count = call_pv( "threads::shared::_remote",G_SCALAR );
 
         SPAGAIN;
-	ordinal = POPi;
+    ordinal = POPi;
    /*     printf ("lock: ordinal = %d, process = %d\n",ordinal,process); */
         PUTBACK;
 
@@ -123,28 +123,87 @@ lock(SV *ref)
         ENTER;
 
 #----------------------------------------------------------------------
-#  IN: 1 any variable (scalar,array,hash,glob)
+#  IN: 1 any variable (scalar,array,hash,glob) -- signal variable
+#      2 any variable (scalar,array,hash,glob) -- lock variable
 
 void
-cond_wait(SV *ref)
-    PROTOTYPE: \[$@%]
+cond_wait(SV *ref, ...)
+    PROTOTYPE: \[$@%];\[$@%]
+    PREINIT:
+        SV *ref2;
     CODE:
         ref = SvRV(ref);
         if(SvROK(ref))
             ref = SvRV(ref);
-
+        if (items > 1)
+        {
+            ref2 = SvRV(ST(1));
+            if(SvROK(ref2))
+                ref2 = SvRV(ref2);
+        }
+        
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_wait",0)));
         XPUSHs(sv_2mortal(newRV(ref)));
+        if (items > 1)
+            XPUSHs(sv_2mortal(newRV(ref2)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
 
         FREETMPS;
         LEAVE;
+
+#----------------------------------------------------------------------
+#  IN: 1 any variable (scalar,array,hash,glob) -- signal variable
+#      2 epoch time of event expiration
+#      3 any variable (scalar,array,hash,glob) -- lock variable
+
+bool
+cond_timedwait(SV *ref, double epochts, ...)
+    PROTOTYPE: \[$@%]$;\[$@%]
+    PREINIT:
+        SV *ref2;
+    CODE:
+        ref = SvRV(ref);
+        if(SvROK(ref))
+            ref = SvRV(ref);
+        if (items > 2)
+        {
+            ref2 = SvRV(ST(2));
+            if(SvROK(ref2))
+                ref2 = SvRV(ref2);
+        }
+
+        ENTER;
+        SAVETMPS;
+
+        PUSHMARK(SP);
+        XPUSHs(sv_2mortal(newSVpv("_timedwait",0)));
+        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newSVnv(abs(epochts))));
+        if (items > 2)
+            XPUSHs(sv_2mortal(newRV(ref2)));
+        PUTBACK;
+
+        int count = call_pv( "threads::shared::_remote",G_ARRAY );
+
+        SPAGAIN;
+        if (count != 2)
+            croak ("Error receiving response value from _remote\n");
+
+        bool retval = POPi;
+        U16 ordinal = POPi;
+        PUTBACK;
+
+        FREETMPS;
+        LEAVE;
+        RETVAL = retval;
+    OUTPUT:
+        RETVAL
 
 #----------------------------------------------------------------------
 #  IN: 1 any variable (scalar,array,hash,glob)

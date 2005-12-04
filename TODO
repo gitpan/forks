@@ -20,3 +20,11 @@ running.  Need a way to check for that.
 Signalling unlocked variables should become possible.  Maybe lock() the
 variable before signalling?  Probably not.  Simply taking away the check for
 the lock causes a deadlock at the moment, so that doesn't make much sense.
+
+I have been mulling over the idea of implementing parts of
+the forks::shared interface with different transport interfaces (such as SysV
+shared memory for variable data and locks), and providing these as drop-in
+replacements for forks::shared.
+
+Add a method to give the user run-time privilage control over unix socket 
+file descriptors (for additional security control).

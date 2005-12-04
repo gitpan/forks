@@ -26,6 +26,8 @@ if ($forks::threads || $forks::threads) { # twice to avoid warnings
 } else {
     *share = \&share_disabled;
     *lock = *cond_wait = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
+    *cond_wait = sub (\[$@%];\[$@%]) {undef};
+    *cond_timedwait = sub (\[$@%]$;\[$@%]) {undef};
 }
 
 # Avoid warnings
@@ -33,6 +35,7 @@ if ($forks::threads || $forks::threads) { # twice to avoid warnings
 *share =
 *lock =
 *cond_wait =
+*cond_timedwait =
 *cond_signal =
 *cond_broadcast =
  sub {} if 0;
@@ -222,7 +225,7 @@ sub _export {
 # Export whatever needs to be exported
 
     my $namespace = shift().'::';
-    @_ = qw(share lock cond_wait cond_signal cond_broadcast) unless @_;
+    @_ = qw(share lock cond_wait cond_timedwait cond_signal cond_broadcast) unless @_;
     no strict 'refs';
     *{$namespace.$_} = \&$_ foreach @_;
 } #_export
@@ -299,6 +302,7 @@ sub _unlock {
 #  IN: 1 remote subroutine to call
 #      2 parameter of which a reference needs to be locked
 # OUT: 1 ordinal number of variable
+#      2 return value scalar of _command
 
 sub _remote {
 
@@ -327,22 +331,47 @@ sub _remote {
 # If there is an ordinal number (if no object, there's no number either)
 #  If we're about to lock
 #   Mark the variable as locked in this thread
+#  Else if this is second case of _wait or _timedwait (unique signal and lock vars)
+#   Obtain the reference to the lock variable (pop it off stack)
+#   Create the reference type of that reference
+#   Initialize the lock object
+#   Obtain the lock object
+#   If there is an ordinal number (if no object, there's no number either)
+#    Die now if the variable does not appear to be locked
+#    Push lock ordinal back on stack
 #  Else (doing something on a locked variable)
 #   Die now if the variable does not appear to be locked
 
     if (my $ordinal = $object->{'ordinal'}) {
         if ($sub eq '_lock') {
             $LOCKED{$ordinal} = undef;
+        } elsif (($sub eq '_wait' && scalar @_ > 0) || ($sub eq '_timedwait' && scalar @_ > 1)) {
+            my $it2 = pop @_;
+            my $ref2 = reftype $it2;
+            my $object2;
+            if ($ref2 eq 'SCALAR') {
+                $object2 = tied ${$it2};
+            } elsif ($ref2 eq 'ARRAY') {
+                $object2 = tied @{$it2};
+            } elsif ($ref2 eq 'HASH') {
+                $object2 = tied %{$it2};
+            } elsif ($ref2 eq 'GLOB') {
+                $object2 = tied *{$it2};
+            }
+            if (my $ordinal2 = $object2->{'ordinal'}) {
+                _croak( "You need a lock before you can cond$sub" )
+                 if not exists $LOCKED{$ordinal2};
+                push @_, $ordinal2;
+            }
         } else {
             _croak( "You need a lock before you can cond$sub" )
              if not exists $LOCKED{$ordinal};
         }
 
 #  Execute the indicated subroutine for this shared variable
-#  Return the variable's ordinal number
-
-        _command( $sub,$ordinal );
-        return $ordinal;
+#  Return the variable's ordinal number (and _command return scalar value if wantarray)
+        my $retval = _command( $sub,$ordinal,@_ );
+        return wantarray ? ($ordinal,$retval) : $ordinal;
     }
 
 # Adapt sub name to what we know outside
@@ -384,6 +413,9 @@ forks::shared - drop-in replacement for Perl threads::shared with forks()
 
   lock( $variable );
   cond_wait( $variable );
+  cond_wait( $variable, $lock_variable );
+  cond_timedwait( $variable, abs time );
+  cond_timedwait( $variable, abs time, $lock_variable );
   cond_signal( $variable );
   cond_broadcast( $variable );
 
@@ -403,7 +435,8 @@ These problems are known and will be fixed in the future:
 
 Although there are no errors in the test-suite, the test harness thinks there
 is something wrong because of an unexpected exit() value.  Not sure what to do
-about this yet.
+about this yet.  This appears to only occur on instances of perl built with
+native ithreads.
 
 =item shared variable in push() on shared array bombs
 
@@ -419,24 +452,28 @@ recent discussion on p5p.
 
 =back
 
-=head1 CREDITS
+=head1 ORIGINAL AUTHOR CREDITS
 
 Arthur Bergman for Hook::Scope (from which I swiped the code to have locked
 variables automatically unlock upon leaving the scope they were locked in) and
 threads::shared (from which I swiped the code to create references from the
 parameter list passed to a subroutine).
 
-=head1 AUTHOR
+=head1 CURRENT MAINTAINER
+
+Eric Rybski <rybskej@yahoo.com>.
+
+=head1 ORIGINAL AUTHOR
 
 Elizabeth Mattijsen, <liz@dijkmat.nl>.
 
-Please report bugs to <perlbugs@dijkmat.nl>.
-
 =head1 COPYRIGHT
 
-Copyright (c) 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
-reserved.  This program is free software; you can redistribute it and/or
-modify it under the same terms as Perl itself.
+Copyright (c)
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
+ 2005 Eric Rybski <rybskej@yahoo.com>.
+All rights reserved.  This program is free software; you can redistribute it
+and/or modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 

@@ -127,21 +127,25 @@ threads::shared::array - default class for tie-ing arrays to threads with forks
 
 Helper class for L<forks::shared>.  See documentation there.
 
-=head1 CREDITS
+=head1 ORIGINAL AUTHOR CREDITS
 
 Implementation inspired by L<Tie::StdArray>.
 
-=head1 AUTHOR
+=head1 CURRENT MAINTAINER
+
+Eric Rybski <rybskej@yahoo.com>.
+
+=head1 ORIGINAL AUTHOR
 
 Elizabeth Mattijsen, <liz@dijkmat.nl>.
 
-Please report bugs to <perlbugs@dijkmat.nl>.
-
 =head1 COPYRIGHT
 
-Copyright (c) 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
-reserved.  This program is free software; you can redistribute it and/or
-modify it under the same terms as Perl itself.
+Copyright (c)
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
+ 2005 Eric Rybski <rybskej@yahoo.com>.
+All rights reserved.  This program is free software; you can redistribute it
+and/or modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
