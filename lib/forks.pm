@@ -6,7 +6,7 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.17';
+$VERSION = '0.18';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;

@@ -3,7 +3,7 @@ package threads::shared::hash;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.16';
+$VERSION = '0.18';
 use strict;
 
 # Satisfy -require-

@@ -1,13 +1,18 @@
-0.17	4 December 2005
+0.18	7 December 2005
+	Introduction of UNIX socket support.  Socket descriptors are written
+	to /var/tmp and given rw access by all by default for best support
+	on multi-user systems.
+
+	Importing SOMAXCONN and using for socket server listener max socket
+	connections (was hard coded at 10) for best (and system-level flexible)
+	thread spawn stability under high load.
+	
+0.17	14 May 2005 (unreleased)
 	Added method cond_timedwait and added second forms of cond_wait and
 	cond_timedwait per the ithread specification (where signal var 
 	differs from lock var). All elements of perl ithread interface are
 	now implemented, with respect to perl 5.8.7.
 	
-	Introduction of UNIX socket support.  Socket descriptors are written
-	to /var/tmp and given rw access by all by default for best support
-	on multi-user systems.
-
 	Added eval wrapper around new thread code execution to trap die
 	events; thus, join() is now more robust (fewer chances for runtime
 	hangs on '$thread->join' due to premature child thread termination).
@@ -16,10 +21,6 @@
 	an already unlocked variable, it would not correctly enter if case
 	and return undef or croak() due to undef value in @LOCKED resolving
 	to numeric 0.
-	
-	Importing SOMAXCONN and using for socket server listener max socket
-	connections (was hard coded at 10) for best (and system-level flexible)
-	thread spawn stability under high load.
 	
 0.16	8 April 2004
 	Changed semantics of debugging function: must now specify environment
