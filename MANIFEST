@@ -1,18 +1,22 @@
-MANIFEST
 CHANGELOG
-README
-TODO
-VERSION
-Makefile.PL
 forks.xs
-ppport.h
 lib/forks.pm
 lib/forks/shared.pm
-lib/threads/shared/scalar.pm
 lib/threads/shared/array.pm
-lib/threads/shared/hash.pm
 lib/threads/shared/handle.pm
+lib/threads/shared/hash.pm
+lib/threads/shared/scalar.pm
+Makefile.PL
+MANIFEST
+MANIFEST.skip
+META.yml			Module meta-data (added by MakeMaker)
+ppport.h
+README
+SIGNATURE
 t/forks01.t
 t/forks02.t
 t/forks03.t
-META.yml                                 Module meta-data (added by MakeMaker)
+t/forks20.t
+t/forks99.t
+TODO
+VERSION

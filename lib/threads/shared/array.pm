@@ -3,8 +3,9 @@ package threads::shared::array;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.18';
+$VERSION = '0.19';
 use strict;
+use Scalar::Util;
 
 # Satisfy -require-
 
@@ -19,62 +20,62 @@ use strict;
 #      2..N initial values
 # OUT: 1 instantiated object
 
-sub TIEARRAY { my $class = shift; bless \@_,$class } #TIEARRAY
+sub TIEARRAY { my $class = shift; bless \do{ my $o = @_ && Scalar::Util::reftype($_[0]) eq 'ARRAY' ? $_[0] : [] },$class } #TIEARRAY
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2 index of element to fetch
 # OUT: 1 value of element
 
-sub FETCH { $_[0]->[$_[1]] } #FETCH
+sub FETCH { ${$_[0]}->[$_[1]] } #FETCH
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 number of elements
 
-sub FETCHSIZE { scalar @{$_[0]} } #FETCHSIZE
+sub FETCHSIZE { scalar @{${$_[0]}} } #FETCHSIZE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2 index for which to store
 #      3 new value
 
-sub STORE { $_[0]->[$_[1]] = $_[2] } #STORE
+sub STORE { ${$_[0]}->[$_[1]] = $_[2] } #STORE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2 new number of elements
 
-sub STORESIZE { $#{$_[0]} = $_[1]-1 } #STORESIZE
+sub STORESIZE { $#{${$_[0]}} = $_[1]-1 } #STORESIZE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
-sub CLEAR { @{$_[0]} = () } #CLEAR
+sub CLEAR { @{${$_[0]}} = () } #CLEAR
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 popped off value
 
-sub POP { pop(@{$_[0]}) } #POP
+sub POP { pop(@{${$_[0]}}) } #POP
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2..N values to push
 
-sub PUSH { push( @{shift()},@_ ) } #PUSH
+sub PUSH { my $self = shift; push( @{${$self}},@_ ) } #PUSH
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 shifted off value
 
-sub SHIFT { shift(@{$_[0]}) } #SHIFT
+sub SHIFT { shift(@{${$_[0]}}) } #SHIFT
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2..N values to unshift
 
-sub UNSHIFT { unshift( @{shift()},@_ ) } #UNSHIFT
+sub UNSHIFT { my $self = shift; unshift( @{${$self}},@_ ) } #UNSHIFT
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -86,13 +87,15 @@ sub UNSHIFT { unshift( @{shift()},@_ ) } #UNSHIFT
 sub SPLICE {
 
 # Obtain the object
+# Obtain the array object
 # Obtain the current size of the list
 # Obtain the offset to use
 # Adapt if it was to be relative from the end
 # Obtain the number of element to remove
-
-    my $list = shift;
-    my $size  = $list->FETCHSIZE;
+	
+	my $self = shift;
+    my $list = ${$self};
+    my $size  = $self->FETCHSIZE;
     my $offset = @_ ? shift : 0;
     $offset += $size if $offset < 0;
     my $length = @_ ? shift : $size - $offset;
@@ -107,13 +110,13 @@ sub SPLICE {
 #      2 index of element to check
 # OUT: 1 flag: whether element exists
 
-sub EXISTS { exists $_[0]->[$_[1]] } #EXISTS
+sub EXISTS { exists ${$_[0]}->[$_[1]] } #EXISTS
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2 index of element to delete
 
-sub DELETE { delete $_[0]->[$_[1]] } #DELETE
+sub DELETE { delete ${$_[0]}->[$_[1]] } #DELETE
 
 #---------------------------------------------------------------------------
 
@@ -142,8 +145,8 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
- 2005 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 

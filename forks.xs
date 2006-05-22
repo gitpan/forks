@@ -57,14 +57,14 @@ share(SV *ref)
         SAVETMPS;
 
         PUSHMARK(SP);
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         PUTBACK;
 
         call_pv( "threads::shared::_share",G_DISCARD );
 
         FREETMPS;
         LEAVE;
-        RETVAL = newRV(ref);
+        RETVAL = newRV_inc(ref);
     OUTPUT:
         RETVAL
 
@@ -79,7 +79,7 @@ share_disabled(SV *ref)
         ref = SvRV(ref);
         if(SvROK(ref))
             ref = SvRV(ref);
-        RETVAL = newRV(ref);
+        RETVAL = newRV_inc(ref);
     OUTPUT:
         RETVAL
 
@@ -90,7 +90,7 @@ void
 lock(SV *ref)
     PROTOTYPE: \[$@%]
     PPCODE:
-    int count;
+        int count;
         U16 ordinal;
         U16 process;
 
@@ -105,14 +105,14 @@ lock(SV *ref)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_lock",0)));
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         PUTBACK;
 
         process = getpid();
         count = call_pv( "threads::shared::_remote",G_SCALAR );
 
         SPAGAIN;
-    ordinal = POPi;
+        ordinal = POPi;
    /*     printf ("lock: ordinal = %d, process = %d\n",ordinal,process); */
         PUTBACK;
 
@@ -147,9 +147,9 @@ cond_wait(SV *ref, ...)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_wait",0)));
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         if (items > 1)
-            XPUSHs(sv_2mortal(newRV(ref2)));
+            XPUSHs(sv_2mortal(newRV_inc(ref2)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -167,6 +167,9 @@ cond_timedwait(SV *ref, double epochts, ...)
     PROTOTYPE: \[$@%]$;\[$@%]
     PREINIT:
         SV *ref2;
+        int count;
+        bool retval;
+        U16 ordinal;
     CODE:
         ref = SvRV(ref);
         if(SvROK(ref))
@@ -183,20 +186,20 @@ cond_timedwait(SV *ref, double epochts, ...)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_timedwait",0)));
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         XPUSHs(sv_2mortal(newSVnv(abs(epochts))));
         if (items > 2)
-            XPUSHs(sv_2mortal(newRV(ref2)));
+            XPUSHs(sv_2mortal(newRV_inc(ref2)));
         PUTBACK;
 
-        int count = call_pv( "threads::shared::_remote",G_ARRAY );
+        count = call_pv( "threads::shared::_remote",G_ARRAY );
 
         SPAGAIN;
         if (count != 2)
             croak ("Error receiving response value from _remote\n");
 
-        bool retval = POPi;
-        U16 ordinal = POPi;
+        retval = POPi;
+        ordinal = POPi;
         PUTBACK;
 
         FREETMPS;
@@ -221,7 +224,7 @@ cond_signal(SV *ref)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_signal",0)));
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -245,11 +248,66 @@ cond_broadcast(SV *ref)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_broadcast",0)));
-        XPUSHs(sv_2mortal(newRV(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(ref)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
 
+        FREETMPS;
+        LEAVE;
+
+#----------------------------------------------------------------------
+#  IN: 1 scalar
+#  IN: 1 optional scalar
+
+void
+bless(SV *ref, ...)
+    PROTOTYPE: $;$
+    PREINIT:
+        HV* stash;
+        SV* classname;
+        STRLEN len;
+        char *ptr;
+        SV* myref;
+    CODE:
+        if (items == 1) {
+            stash = CopSTASH(PL_curcop);
+        } else {
+            classname = ST(1);
+
+            if (classname &&
+                ! SvGMAGICAL(classname) &&
+                ! SvAMAGIC(classname) &&
+                SvROK(classname))
+            {
+                Perl_croak(aTHX_ "Attempt to bless into a reference");
+            }
+            ptr = SvPV(classname, len);
+            if (ckWARN(WARN_MISC) && len == 0) {
+                Perl_warner(aTHX_ packWARN(WARN_MISC),
+                        "Explicit blessing to '' (assuming package main)");
+            }
+            stash = gv_stashpvn(ptr, len, TRUE);
+        }
+        SvREFCNT_inc(ref);
+        (void)sv_bless(ref, stash);
+        ST(0) = sv_2mortal(ref);
+        
+        myref = SvRV(sv_mortalcopy(ref));
+        if(SvROK(myref))
+            myref = SvRV(myref);
+
+        dSP;
+        ENTER;
+        SAVETMPS;
+
+        PUSHMARK(SP);
+        XPUSHs(sv_2mortal(newRV(myref)));
+        XPUSHs(sv_2mortal(newSVpv(HvNAME(stash), 0)));
+        PUTBACK;
+
+        call_pv( "threads::shared::_bless",G_DISCARD );
+        
         FREETMPS;
         LEAVE;
 

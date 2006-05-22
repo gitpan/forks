@@ -1,4 +1,6 @@
 package forks;   # make sure CPAN picks up on forks.pm
+$VERSION = '0.19';
+
 package threads; # but in fact we're masquerading as threads.pm
 
 # Make sure we have version info for this module
@@ -6,10 +8,11 @@ package threads; # but in fact we're masquerading as threads.pm
 # Set flag to indicate that we're not really the original threads implementation
 # Be strict from now on
 
-$VERSION = '0.18';
+$VERSION = '1.07';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 use strict;
+use Scalar::Util qw(reftype blessed);
 
 #---------------------------------------------------------------------------
 # If we're running in a perl before 5.8.0, we need a source filter to change
@@ -73,21 +76,37 @@ EOD
 #   Make THREADS_UNIX a false constant: default to INET sockets
 
 my $DEBUG;
+my $NICE;
+my $FORCE_SIGCHLD_IGNORE;
 my $THREADS_UNIX;
 
 BEGIN {
     if (exists $ENV{'THREADS_DEBUG'}) {
         $ENV{'THREADS_DEBUG'} =~ m#^(.*)$#s;
         $DEBUG = $1;
-        *DEBUG = sub { $DEBUG };
+        *DEBUG = sub () { $DEBUG };
     } else {
         *DEBUG = sub () { 0 };
+    }
+    if (exists $ENV{'THREADS_NICE'}) {
+        $ENV{'THREADS_NICE'} =~ m#^(.*)$#s;
+        $NICE = $1;
+        *NICE = sub () { $NICE };
+    } else {
+        *NICE = sub () { 0 };
+    }
+    if (exists $ENV{'THREADS_SIGCHLD_IGNORE'}) {
+        $ENV{'THREADS_SIGCHLD_IGNORE'} =~ m#^(.*)$#s;
+        $FORCE_SIGCHLD_IGNORE = $1;
+        *FORCE_SIGCHLD_IGNORE = sub () { 1 };
+    } else {
+        *FORCE_SIGCHLD_IGNORE = sub () { 0 };
     }
     my $threads_socket_unix = '/var/tmp/perlforks.';
     if (defined $ENV{'THREADS_SOCKET_UNIX'} && $ENV{'THREADS_SOCKET_UNIX'} ne "") {
         #$ENV{'THREADS_SOCKET_UNIX'} =~ m#^(.*)$#s;
         $THREADS_UNIX = $threads_socket_unix;
-        *THREADS_UNIX = sub { $THREADS_UNIX };
+        *THREADS_UNIX = sub () { $THREADS_UNIX };
     } else {
         *THREADS_UNIX = sub () { 0 };
     }
@@ -96,7 +115,7 @@ BEGIN {
 # Load the XS stuff
 
 require XSLoader;
-XSLoader::load( 'forks',$threads::VERSION );
+XSLoader::load( 'forks',$forks::VERSION );
 
 # Make sure we can die with lots of information
 # Make sure we can do sockets and have the appropriate constants
@@ -108,8 +127,9 @@ use Carp       ();
 use Socket     qw(SOMAXCONN);
 use IO::Socket ();
 use IO::Select ();
-use POSIX      qw(BUFSIZ EWOULDBLOCK O_NONBLOCK F_GETFL F_SETFL);
+use POSIX      qw(:signal_h :sys_wait_h BUFSIZ EWOULDBLOCK O_NONBLOCK F_GETFL F_SETFL);
 use Storable   qw(freeze thaw);
+use reaper     qw(reapPid);
 
 # Thread local query server object
 # The port on which the thread server is listening
@@ -125,6 +145,8 @@ my $SHUTDOWN;
 
 # Initialize the flag that indicates that we're still running
 # Initialize the number of bytes to read at a time
+# List of signals that we will delay if target platform requires custom CHLD handler
+# Boolean indicating whether or not platform requires a custom CHLD handler
 # Initialize hash (key: client) with info to be written to client threads
 # Initialize hash (key: client) with clients that we're done with
 # Initialize the "thread local" thread id
@@ -132,6 +154,8 @@ my $SHUTDOWN;
 
 my $RUNNING = 1;
 my $BUFSIZ  = BUFSIZ;
+my @DEFERRED_SIGNALS = (SIGCHLD);
+my $CUSTOM_SIGCHLD = 0;
 my %WRITE;
 my %DONEWITH;
 my $TID;
@@ -264,6 +288,7 @@ sub new {
 # Obtain the thread id from the thread just started
 # Create an object for it and return it
 
+    reapPid($pid) if $CUSTOM_SIGCHLD;
     my ($tid) = _command( '_waitpid2tid',$pid );
     $class->_object( $tid,$pid );
 } #new
@@ -396,6 +421,15 @@ sub async (&;@) { new( 'threads',@_ ) } #async
 # standard Perl features
 
 #---------------------------------------------------------------------------
+# Default reaper, if using custom CHLD signal handler (prevents zombies)
+
+sub REAPER {
+# While we have zombie processes, loop and reap (don't care about exit status)
+
+    while (my $pid = waitpid(-1, &WNOHANG) > 0) {}
+} #REAPER
+
+#---------------------------------------------------------------------------
 #  IN: 1 class (ignored)
 #      2..N subroutines to export (default: async only)
 
@@ -431,7 +465,7 @@ _log( " ! global startup" ) if DEBUG;
 # Make sure that the server is non-blocking
 
     if ($THREADS_UNIX) {
-    	_croak( "UNIX socket file '$THREADS_UNIX$$' in use by non-socket file" ) if -e $THREADS_UNIX.$$ && !-S $THREADS_UNIX.$$;
+        _croak( "UNIX socket file '$THREADS_UNIX$$' in use by non-socket file" ) if -e $THREADS_UNIX.$$ && !-S $THREADS_UNIX.$$;
         _croak( "Unable to delete UNIX socket file '$THREADS_UNIX$$'" ) if -S $THREADS_UNIX.$$ && !unlink($THREADS_UNIX.$$);
         $QUERY = IO::Socket::UNIX->new(
          Local  => $THREADS_UNIX.$$,
@@ -449,16 +483,28 @@ _log( " ! global startup" ) if DEBUG;
     _nonblock( $QUERY );
 
 # Make sure that children will be reaped automatically
+# Enable custom CHLD signal handler, if necessary
 # If we appear to be in the child
 #  Die if the fork really failed
 #  Start handling requests as the server
+# Mark PID for reaping, if using custom CHLD signal handler
 # Make this thread 0
 
     $SIG{CHLD} = 'IGNORE';
+    unless ($FORCE_SIGCHLD_IGNORE) {
+        local $ENV{PATH} = "/bin:/usr/bin";
+        if (system('/bin/test') == -1) {
+            $SIG{CHLD} = sub { reaper::REAPER ( shift, \&REAPER ); };
+            $CUSTOM_SIGCHLD = 1;
+        } else {
+            $CUSTOM_SIGCHLD = 0;
+        }
+    }
     unless ($SHARED = fork) {
         _croak( "Could not start initial fork\n" ) unless defined( $SHARED );
         return &_server;
     }
+    reapPid($SHARED) if $CUSTOM_SIGCHLD;
     _init_thread();
 } #forks::import
 
@@ -503,10 +549,10 @@ END {
 
 sub _server {
 
-# Make sure we take all the CPU that can be got if we're running as root
+# Set nice value if environment variable set and if we're running as root
 # Mark the parent thread id as detached
 
-    POSIX::nice( -19 ) unless $<;
+    POSIX::nice( $NICE ) if $NICE && !$<;
     $DETACHED{$NEXTTID} = undef;
 
 # Create the select object in which all the connections are stored
@@ -893,6 +939,30 @@ sub _length {
 } #_length
 
 #---------------------------------------------------------------------------
+#  IN: 1 POSIX signals to delay (until unblocked)
+
+sub _block_sigset {
+    my @signals = @_;
+    my $sigset = POSIX::SigSet->new(@signals);
+    my $old_sigset = POSIX::SigSet->new;
+    unless (defined POSIX::sigprocmask(SIG_BLOCK, $sigset, $old_sigset)) {
+        die "Could not block ".CORE::join(',', @signals)."\n";
+    }
+    return $old_sigset;
+} #_block_sigset
+
+#---------------------------------------------------------------------------
+#  IN: 1 POSIX::SigSet object containing original sigset mask returned by _block_sigset
+
+sub _unblock_sigset {
+    my $old_sigset = shift;
+    unless (defined POSIX::sigprocmask(SIG_UNBLOCK, $old_sigset)) {
+        die "Could not unblock ".CORE::join(',', @DEFERRED_SIGNALS)."\n";
+    }
+    return 1;
+} #_unblock_sigset
+
+#---------------------------------------------------------------------------
 #  IN: 1 client object
 #      2 frozen message to send
 
@@ -908,12 +978,16 @@ sub _send {
 _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack( substr($frozen,4) )}) )
  if DEBUG;
 
+# Block signals, if using custom CHLD signal handler
 # Send the data, find out how many really got sent
+# Unblock signals, if using custom CHLD signal handler
 # Die now if an error has occurred
 # Die now if not all bytes sent
 
     $frozen =~ m#^(.*)$#s;
+    my $old_sigset = _block_sigset(@DEFERRED_SIGNALS) if $CUSTOM_SIGCHLD;
     my $sent = send( $client,$1,0 );
+    _unblock_sigset($old_sigset) if $CUSTOM_SIGCHLD;
     _croak( "Error when sending message to $CLIENT2TID{$client}: $!" )
      unless defined($sent);
     _croak( "Did not send all bytes: only $sent of $length to $CLIENT2TID{$client}\n" )
@@ -927,10 +1001,12 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack( substr($frozen,4) )}) )
 sub _receive {
 
 # Obtain the client object
+# Block signals, if using custom CHLD signal handler
 # Obtain the length
 # Initialize the data to be received
 
     my $client = shift;
+    my $old_sigset = _block_sigset(@DEFERRED_SIGNALS) if $CUSTOM_SIGCHLD;
     my $length = my $todo = _length( $client );
     my $frozen;
 
@@ -941,6 +1017,7 @@ sub _receive {
 #   Obtain any parameters if possible
 #   Return the result
 #  Set up for next attempt to fetch
+# Unblock signals, if using custom CHLD signal handler
 
     while (defined recv( $client,my $data,$todo,0 )) {
         $frozen .= $data;
@@ -952,6 +1029,7 @@ _log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
         }
         $todo -= length( $data );
     }
+    _unblock_sigset($old_sigset) if $CUSTOM_SIGCHLD;
 
 # Die now (we didn't get the data)
 
@@ -1248,8 +1326,47 @@ sub _tied {
     $sub =~ m#^(?:.*)::(.*?)$#;
         $code = $DISPATCH{$sub} = $object->can( $1 );
     }
-    $WRITE{$client} = $code ? _pack( $code->( $object,@_ ) ) : $undef;
+    my @result;
+    if ($code) {
+        foreach ($code->( $object,@_ )) {
+            if (my $ref = reftype($_)) {
+                my $tied = $ref eq 'SCALAR' ? tied ${$_}
+                    : $ref eq 'ARRAY' ? tied @{$_}
+                    : $ref eq 'HASH' ? tied %{$_}
+                    : $ref eq 'GLOB' ? tied *{$_}
+                    : undef;
+                if (defined $tied && blessed($tied) eq 'threads::shared') {
+                    my $ref_obj = $TIED[$tied->{'ordinal'}];
+                    bless($_, blessed(${$ref_obj})) if blessed(${$ref_obj});                    
+                }
+            }
+            push @result, $_;
+        }
+    }
+    $WRITE{$client} = $code ? _pack( @result ) : $undef;
 } #_tied
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 ordinal number of variable to bless
+#      3 class type with which bless object
+# OUT: 1 whether successful
+
+sub _bless {
+
+# Obtain the socket
+# Obtain the ordinal number of the variable
+# Set the tied object's blessed property
+
+    my $client = shift;
+    my $ordinal = shift;
+    my $class = shift;
+    bless(${$TIED[$ordinal]}, $class);
+
+# Indicate that we're done to the client
+
+    $WRITE{$client} = $true;
+} #_bless
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -1610,7 +1727,7 @@ sub _isjoined {
 #---------------------------------------------------------------------------
 #  IN: 1 message to display
 
-sub _croak { return &Carp::confess } #_croak
+sub _croak { return &Carp::confess(threads->tid." ($$): ".shift) } #_croak
 
 #---------------------------------------------------------------------------
 #  IN: 1 message to log
@@ -1687,6 +1804,7 @@ sub _run_CLONE {
 #---------------------------------------------------------------------------
 
 __END__
+=pod
 
 =head1 NAME
 
@@ -1800,6 +1918,7 @@ regarding my plans to tackle this issue.
 
  Devel::Required (any)
  IO::Socket (1.18)
+ reaper (0.03)
  Scalar::Util (1.01)
  Storable (any)
 
@@ -1858,7 +1977,7 @@ debugging will also be enabled from the start.
 =head2 UNIX socket support
 
 For users who do not wish to (or can not) use TCP sockets, UNIX socket support
-is available.  This can be B<only> switched on by defining the environement
+is available.  This can be B<only> switched on by defining the environment
 variable THREADS_SOCKET_UNIX.  If the environment variable has a true value, then
 UNIX sockets will be used instead of the default TCP sockets.  Socket descriptors 
 are currently written to /var/tmp and given a+rw access by default (for cleanest 
@@ -1866,9 +1985,9 @@ functional support on multi-user systems).
 
 This feature is excellent for applications that require extra security, as it
 does not expose forks.pm to any INET vunerabilities your system may be
-subject to (such as systems that are not run behind a firewall).  It also may
-provide an additional, minor performance boost, as there is less system
-overhead necessary to handle UNIX vs INET socket communication.
+subject to (i.e. systems not protected by a firewall).  It also may
+provide an additional performance boost, as there is less system overhead
+necessary to handle UNIX vs INET socket communication.
 
 =head1 CAVEATS
 
@@ -1879,7 +1998,27 @@ Some caveats that you need to be aware of.
 Because of the use of sockets for inter-thread communication, there is an
 inherent larger latency with the interaction between threads.  However, the
 fact that TCP sockets are used, may open up the possibility to share threads
-over more than one physical machine.
+over more than one physical machine.  You can decrease some of this latency
+by using UNIX sockets (see L</"UNIX socket support">).
+
+=head2 Modules that modify $SIG{CHLD}
+
+In order to be compatible with perl's core system() function on all platforms,
+extra care has gone into implementing a smarter $SIG{CHLD} in forks.pm.  If any
+modules you use modify $SIG{CHLD} (or if you attempt to modify it yourself), 
+you may end up with undesired issues such as unreaped processes or a system()
+function that returns -1 instead of the correct exit value.  See L<perlipc>
+for more information regarding common issues with modifying $SIG{CHLD}.
+
+If $SIG{CHLD} has to be modified in any way by your software, please take extra
+care to implement a handler that follows the requirements of chained signal
+handlers.  See L<reaper> for more information.
+
+You may define the environment variable THREADS_SIGCHLD_IGNORE to to force 
+forks to use 'IGNORE' on systems where a custom CHLD signal handler has been
+automatically installed to support correct exit code of perl core system()
+function.  There should be no need to use this unless you encounter specific
+issues with L<reaper> signal chaining.
 
 =head2 Source filter
 
@@ -1891,21 +2030,7 @@ running under 5.6.x.
 
 =head1 TODO
 
-It would be an idea to add the feature to transparently bless across threads 
-(which is promised in the documentation of threads.pm, but which I personally 
-don't see happening before Ponie and/or Perl 6 comes around).
-
-I'm looking for suggestions on ways to decrease latency of inter-thread
-communication.  I have been mulling over the idea of implementing parts of
-the forks::shared interface with different transport interfaces (such as SysV
-shared memory for variable data and locks), and providing these as drop-in
-replacements for forks::shared.  My goal is to try to create a set of flexible
-alternatives that best fit needs of end application developers.
-
-Add a method to give the user run-time privilage control over unix socket 
-file descriptors (for additional security control).
-
-And of course, there might still be bugs in there.  Patches are welcome!
+See the TODO file in the distribution.
 
 =head1 KNOWN PROBLEMS
 
@@ -1924,9 +2049,11 @@ happens.  Patches are welcome.
 =item test-suite exits in a weird way
 
 Although there are no errors in the test-suite, the test harness sometimes
-thinks there is something wrong because of an unexpected exit() value.  Not
-sure what to do about this yet.  This appears to only occur on instances of 
-perl built with native ithreads.
+thinks there is something wrong because of an unexpected exit() value.  This
+is an issue with Test::More's END block, which wasn't designed to co-exist
+with a threads environment and forked processes.  Hopefully, that module will
+be patched in the future, but for now, the warnings are harmless and may be
+safely ignored.
 
 =item share() doesn't lose value for arrays and hashes
 
@@ -1939,6 +2066,8 @@ This B<could> be considered a bug in the standard Perl implementation.  In any
 case this is an inconsistency of the behaviour of threads.pm and forks.pm.
 Maybe a special "totheletter" option should be added to forks.pm to make
 forks.pm follow this behaviour of threads.pm to the letter.
+
+And of course, there might be other, undiscovered issues.  Patches are welcome!
 
 =back
 
@@ -1988,8 +2117,8 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
- 2005 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 

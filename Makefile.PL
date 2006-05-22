@@ -36,15 +36,17 @@ rename $new,$old  or die "Could not rename $new to $old\n";
 chmod 0444, $old  or die "Could not change permissions on $old\n";
 
 WriteMakefile (
- NAME		=> "forks",
- AUTHOR		=> 'Eric Rybski (rybskej@yahoo.com)',
- ABSTRACT	=> 'forks - simulate threads with fork',
- VERSION_FROM	=> 'lib/forks.pm',
+ NAME       => "forks",
+ AUTHOR     => 'Eric Rybski (rybskej@yahoo.com)',
+ ABSTRACT   => 'forks - emulate threads with fork',
+ VERSION_FROM   => 'lib/forks.pm',
 
- PREREQ_PM	=> {@extra_prereq,qw(
-		    Devel::Required     0
-		    Scalar::Util	1.01
-		    Storable		0
-                    IO::Socket          1.18
-                   )},
+ PREREQ_PM  => {@extra_prereq,qw(
+            Devel::Required     0
+            Scalar::Util        1.01
+            Storable            0
+            IO::Socket          1.18
+            reaper              0.03
+                )},
+(MM->can('signature_target') ? (SIGN => 1) : ()),
 );

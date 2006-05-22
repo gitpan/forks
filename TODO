@@ -1,4 +1,4 @@
-add a test to excercise inter-thread locking
+add a test to exercise inter-thread locking
 
 move source filter from forks.pm to forks::shared.pm, although I doubt that
 there will be many cases where forks would only be used.
@@ -6,12 +6,10 @@ there will be many cases where forks would only be used.
 push with a shared scalar bombs:
  push( @shared,$shared );    # bombs
  push( @shared,$shared.'' ); # works
-Haven't got a clue why.
 
 optimizations:
 - Storable::freeze/thaw not always needed: check Thread::Serialize
 - change remote function names to command numbers: less traffic, no Storable?
-- allow for unix domain sockets as transport medium
 - allow for shared memory as transport medium (how will we fix blocking?)
 
 Global destruction sometimes causes strange errors when threads are still
@@ -21,10 +19,35 @@ Signalling unlocked variables should become possible.  Maybe lock() the
 variable before signalling?  Probably not.  Simply taking away the check for
 the lock causes a deadlock at the moment, so that doesn't make much sense.
 
-I have been mulling over the idea of implementing parts of
-the forks::shared interface with different transport interfaces (such as SysV
-shared memory for variable data and locks), and providing these as drop-in
-replacements for forks::shared.
-
 Add a method to give the user run-time privilage control over unix socket 
 file descriptors (for additional security control).
+
+Add extra logic in _join() to prevent hang on join (for processes that have
+already terminated).  May wish to enable to-the-letter ithread behavior,
+where warning "thread failed to start: $!" is emitted when die occurs in
+a child thread.  If thread fails to start (fork fails), throw warning "thread
+failed to start: $!"?
+
+Add support for new methods in threads.pm: kill, _handle, get_stack_size,
+set_stack_size (perhaps using BSD::Resource)
+
+If main thread dies (and/or if shared process dies?), throw warning "A thread
+exited while N threads were running.", where N = number of processes (threads)
+still active.
+
+Add additional tests to rigorously test tied handle (for shared var) behavior.
+Test delete with single, hash slice, and array slice elements.
+
+eval {} enclose tojoin() section at end of each thread, to (try to) prevent 
+warnings of "socket closed"; may need to rework which sections call _croak() 
+and which should eval{} catch, throw warning, and quietly exit.
+
+Improve error handling of socket exceptions, as some errors are valid run-time
+conditions that forks should be intelligently trapping and handling.
+
+Add some shared handle tests.
+
+Reorganize internals to support a plug-in module style (either via subclass
+or, more likely, function overloading) for better external module support to
+support alternative methods for handling shared variable data, locks, waiting,
+and signals.

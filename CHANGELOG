@@ -1,3 +1,48 @@
+0.19	21 May 2006
+	Implemented an exported bless() function allow transparent bless()
+	across threads with forks::shared.
+	
+	Implemented exported is_thread function in forks::shared.
+	
+	Implemented custom CHLD signal handler to cleanup zombie process.
+	This change was introduced to resolve an issue on some platforms
+	where using $SIG{CHLD}='IGNORE' resulted in the perl core system()
+	function returning -1 instead of the exit code of the system call.
+	This signal handler is only used if the target system's system() 
+	call returns -1 on success when $SIG{CHLD}='IGNORE'.
+	
+	Added THREADS_SIGCHLD_IGNORE to allow users to force forks to use
+	$SIG{CHLD}='IGNORE' on systems where a custom CHLD signal handler
+	is automatically installed to support correct exit code of perl
+	core system() function.
+	
+	Added THREADS_NICE env param to allow user to adjust forks.pm server
+	process POSIX::nice value when running as root.  If unset, no change
+	is made to the server process priority.  This differs from the 
+	historical behavior of forks.pm defaulting to nice -19 when run as 
+	root.
+	
+	Patched XS code to be ANSI C86 compliant (again). Code was unintentionally
+	changed to require a minimum of ANSI C89 compliance since 0.17.  This
+	should allow all gcc 2.95.x and other C86-compliant compilers to once
+	again build forks.pm.
+
+	Fixed prototype mismatch warning when disabling cond_wait when forks
+	is used before forks::shared.
+
+	Added patch to quietly ignore sharing an already shared variable.
+	forks::shared used to bombs out in such cases (e.g. $a:shared; share($a);).
+	
+	Updated to ppport.h 3.06.
+	
+	Implemented separate package versions for forks and threads.  threads
+	package version will represent the most recent threads.pm release that
+	this module is functionally compatible with.
+	
+	Disabled call to server process on shared variable DESTROY calls to
+	decrease server communication load, as none of the affected TIE classes
+	implement custom DESTROY methods.
+
 0.18	7 December 2005
 	Introduction of UNIX socket support.  Socket descriptors are written
 	to /var/tmp and given rw access by all by default for best support
@@ -6,7 +51,7 @@
 	Importing SOMAXCONN and using for socket server listener max socket
 	connections (was hard coded at 10) for best (and system-level flexible)
 	thread spawn stability under high load.
-	
+
 0.17	14 May 2005 (unreleased)
 	Added method cond_timedwait and added second forms of cond_wait and
 	cond_timedwait per the ithread specification (where signal var 
@@ -21,7 +66,7 @@
 	an already unlocked variable, it would not correctly enter if case
 	and return undef or croak() due to undef value in @LOCKED resolving
 	to numeric 0.
-	
+
 0.16	8 April 2004
 	Changed semantics of debugging function: must now specify environment
 	variable THREADS_DEBUG to be able to enable and disable debugging.

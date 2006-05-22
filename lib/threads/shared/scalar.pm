@@ -3,8 +3,9 @@ package threads::shared::scalar;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.18';
+$VERSION = '0.19';
 use strict;
+use Scalar::Util;
 
 # Satisfy -require-
 
@@ -26,21 +27,20 @@ sub TIESCALAR {
 # Return it as a blessed object
 
     my $class = shift;
-    my $instance = shift || undef;
-    bless \$instance,$class;
+    bless \do{ my $o = @_ && Scalar::Util::reftype($_[0]) eq 'SCALAR' ? $_[0] : \undef },$class;
 } #TIESCALAR
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 value
 
-sub FETCH { ${$_[0]} } #FETCH
+sub FETCH { ${${$_[0]}} } #FETCH
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2 new value
 
-sub STORE { ${$_[0]} = $_[1] } #STORE
+sub STORE { ${${$_[0]}} = $_[1] } #STORE
 
 #---------------------------------------------------------------------------
 
@@ -69,8 +69,8 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
- 2005 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 

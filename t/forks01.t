@@ -20,7 +20,7 @@ then it should be safe to install the forks.pm modules.
 
 EOD
 
-use Test::More tests => 88;
+use Test::More tests => 90;
 use strict;
 use warnings;
 
@@ -45,11 +45,15 @@ can_ok( 'threads::shared',qw(
  cond_timedwait
  lock
  share
+ is_shared
+ bless
  TIEARRAY
  TIEHANDLE
  TIEHASH
  TIESCALAR
 ) );
+
+is( system("echo"),0, 'check that CORE::system still returns correct exit values' );
 
 unless (my $pid = fork) {
   threads->isthread if defined($pid);
@@ -78,6 +82,8 @@ is( $t1->join,'2','check return value thread 1' );
 
 my $scalar = 10;
 share( $scalar );
+share( $scalar );	#tests that we quietly support re-sharing a shared variable
+ok(is_shared( $scalar ), 'check if variable is_shared' );
 my $tied = tied( $scalar );
 isa_ok( $tied,'threads::shared',    'check tied object type' );
 

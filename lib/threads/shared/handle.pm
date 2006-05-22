@@ -3,7 +3,7 @@ package threads::shared::handle;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.18';
+$VERSION = '0.19';
 use strict;
 
 # Satisfy -require-
@@ -26,7 +26,7 @@ sub TIEHANDLE {
 # Bless it so we can use it to call ourselves
 
     my $class = shift;
-    my $handle = \do { local *TIEHANDLE }; # basically rw \undef
+    my $handle = \do{ my $o = \do { local *TIEHANDLE } }; # basically rw \undef
     bless $handle,$class;
 
 # Open it if there are any parameters
@@ -40,19 +40,19 @@ sub TIEHANDLE {
 #  IN: 1 instantiated object
 # OUT: 1 flag: whether at end of file
 
-sub EOF { eof( $_[0] ) } #EOF
+sub EOF { eof( ${$_[0]} ) } #EOF
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 position at which the filepointer is located
 
-sub TELL { tell( $_[0] ) } #TELL
+sub TELL { tell( ${$_[0]} ) } #TELL
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 fileno of handle
 
-sub FILENO { fileno( $_[0] ) } #FILENO
+sub FILENO { fileno( ${$_[0]} ) } #FILENO
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -60,17 +60,17 @@ sub FILENO { fileno( $_[0] ) } #FILENO
 #      3 type of offset
 # OUT: 1 result of seek()
 
-sub SEEK { seek( $_[0],$_[1],$_[2] ) } #SEEK
+sub SEEK { seek( ${$_[0]},$_[1],$_[2] ) } #SEEK
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
-sub CLOSE { close( $_[0] ) } #CLOSE
+sub CLOSE { close( ${$_[0]} ) } #CLOSE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
-sub BINMODE { binmode( $_[0] ) } #BINMODE
+sub BINMODE { binmode( ${$_[0]} ) } #BINMODE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -82,8 +82,8 @@ sub OPEN {
 # Close any file that is already opened here
 # Perform a 2 or 3 argument open and return the result
 
-    $_[0]->CLOSE if defined($_[0]->FILENO);
-    @_ == 2 ? open( $_[0], $_[1] ) : open( $_[0],$_[1],$_[2] );
+    ${$_[0]}->CLOSE if defined(${$_[0]}->FILENO);
+    @_ == 2 ? open( ${$_[0]}, $_[1] ) : open( ${$_[0]},$_[1],$_[2] );
 } #OPEN
 
 #---------------------------------------------------------------------------
@@ -92,19 +92,19 @@ sub OPEN {
 #      3 number of bytes/characters to read
 #      4 offset into variable
 
-sub READ { read( $_[0],$_[1],$_[2] ) } #READ
+sub READ { read( ${$_[0]},$_[1],$_[2] ) } #READ
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 line read
 
-sub READLINE { scalar(readline( $_[0] )) } #READLINE
+sub READLINE { scalar(readline( ${$_[0]} )) } #READLINE
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1 character read
 
-sub GETC { getc( $_[0] ) } #GETC
+sub GETC { getc( ${$_[0]} ) } #GETC
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -146,7 +146,7 @@ sub PRINTF {
 #      4 offset into variable
 # OUT: 1 number of bytes/characters written
 
-sub WRITE { syswrite( $_[0],$_[1],$_[2],$_[3] ) } #WRITE
+sub WRITE { syswrite( ${$_[0]},$_[1],$_[2],$_[3] ) } #WRITE
 
 #---------------------------------------------------------------------------
 
@@ -175,8 +175,8 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
- 2005 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 

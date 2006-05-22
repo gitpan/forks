@@ -1,19 +1,22 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
+$VERSION = '0.19';
+
 package threads::shared;  # but we're masquerading as threads::shared.pm
 
 # Make sure we have version info for this module
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '0.18';
+$VERSION  = '1.01';
 $threads_shared = $threads_shared = 1;
 use strict;
+use warnings;
 
 # Make sure we can die with lots of information
 # Make sure we can find out about blessed references correctly
 
 use Carp ();
-use Scalar::Util qw(reftype);
+use Scalar::Util qw(reftype blessed refaddr);
 
 # If forks.pm is loaded
 #  Make sure we have a local copy of the base command handler on the client side
@@ -23,9 +26,10 @@ use Scalar::Util qw(reftype);
 
 if ($forks::threads || $forks::threads) { # twice to avoid warnings
     *_command = \&threads::_command;
+    *is_shared = \&_id;
 } else {
     *share = \&share_disabled;
-    *lock = *cond_wait = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
+    *is_shared = *lock = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
     *cond_wait = sub (\[$@%];\[$@%]) {undef};
     *cond_timedwait = sub (\[$@%]$;\[$@%]) {undef};
 }
@@ -198,15 +202,15 @@ sub UNTIE {
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
-sub DESTROY {
+sub DESTROY {   #currently disabled, as DESTROY method is not used by threads
 
 # Obtain the object
 # Return if we're not in the originating thread
 # Handle the command with the appropriate data
 
-    my $self = shift;
-    return if $self->{'CLONE'} != $CLONE;
-    _command( '_tied',$self->{'ordinal'},$self->{'module'}.'::DESTROY' );
+#    my $self = shift;
+#    return if $self->{'CLONE'} != $CLONE;
+#    _command( '_tied',$self->{'ordinal'},$self->{'module'}.'::DESTROY' );
 } #DESTROY
 
 #---------------------------------------------------------------------------
@@ -225,9 +229,11 @@ sub _export {
 # Export whatever needs to be exported
 
     my $namespace = shift().'::';
-    @_ = qw(share lock cond_wait cond_timedwait cond_signal cond_broadcast) unless @_;
+    my @export = qw(share is_shared lock cond_wait cond_timedwait cond_signal cond_broadcast);
+    push @export, 'bless' if $threads::threads;
+    @export = @_ if @_;
     no strict 'refs';
-    *{$namespace.$_} = \&$_ foreach @_;
+    *{$namespace.$_} = \&$_ foreach @export;
 } #_export
 
 #---------------------------------------------------------------------------
@@ -257,7 +263,7 @@ sub _tie {
     $self->{'type'} = $type;
     $self->{'module'} ||= $class.'::'.$type;
     $self->{'ordinal'} = _command( '_tie',$self,@_ );
-    bless $self,$class;
+    CORE::bless $self,$class;
 } #_tie
 
 #---------------------------------------------------------------------------
@@ -269,22 +275,67 @@ sub _share {
 # Create the reference type of that reference
 
     my $it = shift;
-    my $ref = ref $it;
+    my $ref = reftype $it;
 
-# Tie the variable
+# Tie the variable, or return already existing tied variable
 
     if ($ref eq 'SCALAR') {
-        tie ${$it},'threads::shared',{},${$it};
+        my $tied = tied ${$it};
+        return $tied if blessed($tied) && $tied->isa('threads::shared');
+        tie ${$it},'threads::shared',{},\${$it};
     } elsif ($ref eq 'ARRAY') {
-        tie @{$it},'threads::shared',{},@{$it};
+        my $tied = tied @{$it};
+        return $tied if blessed($tied) && $tied->isa('threads::shared');
+        tie @{$it},'threads::shared',{},\@{$it};
     } elsif ($ref eq 'HASH') {
-        tie %{$it},'threads::shared',{},%{$it};
+        my $tied = tied %{$it};
+        return $tied if blessed($tied) && $tied->isa('threads::shared');
+        tie %{$it},'threads::shared',{},\%{$it};
     } elsif ($ref eq 'GLOB') {
-        tie *{$it},'threads::shared',{},*{$it};
+        my $tied = tied *{$it};
+        return $tied if blessed($tied) && $tied->isa('threads::shared');
+        tie *{$it},'threads::shared',{},\*{$it};
     } else {
         _croak( "Don't know how to share '$it'" );
     }
 } #_share
+
+#---------------------------------------------------------------------------
+#  IN: 1 reference to variable to be shared
+
+sub _id (\[$@%]) {
+
+# Obtain the reference to the variable
+# Create the reference type of that reference
+# Initialize the object
+
+    my $it  = shift;
+    my $ref = reftype $it;
+    my $object;
+
+# Obtain the object
+
+    if ($ref eq 'SCALAR') {
+        $object = tied ${$it};
+    } elsif ($ref eq 'ARRAY') {
+        $object = tied @{$it};
+    } elsif ($ref eq 'HASH') {
+        $object = tied %{$it};
+    } elsif ($ref eq 'GLOB') {
+        $object = tied *{$it};
+    }
+
+# If the reference is a threads::shared tied object
+#  Return the refaddr of the variable
+# Else
+#  Return undef
+
+    if (defined $object && $object->isa('threads::shared')) {
+        return refaddr($it);
+    } else {
+        return undef;
+    }
+}
 
 #---------------------------------------------------------------------------
 #  IN: 1..N ordinal numbers of variables to unlock
@@ -297,6 +348,39 @@ sub _unlock {
     delete @LOCKED{@_};
      _command( '_unlock',@_ );
 } #unlock
+
+sub _bless {
+
+# Obtain the reference to the variable
+# Create the reference type of that reference
+# Initialize the object
+
+    my $it  = shift;
+    my $ref = reftype $it;
+    my $object;
+
+# Obtain the object
+
+    if ($ref eq 'SCALAR') {
+        $object = tied ${$it};
+    } elsif ($ref eq 'ARRAY') {
+        $object = tied @{$it};
+    } elsif ($ref eq 'HASH') {
+        $object = tied %{$it};
+    } elsif ($ref eq 'GLOB') {
+        $object = tied *{$it};
+    }
+
+# If the reference is a threads::shared tied object
+#  Execute the indicated subroutine for this shared variable
+#  Return the variable's ordinal number (and _command return scalar value if wantarray)
+
+    if (defined $object && $object->isa('threads::shared')) {
+        my $ordinal = $object->{'ordinal'};
+        my $retval = _command( '_bless',$ordinal,@_ );
+        return wantarray ? ($ordinal,$retval) : $ordinal;
+    }
+}
 
 #---------------------------------------------------------------------------
 #  IN: 1 remote subroutine to call
@@ -418,12 +502,33 @@ forks::shared - drop-in replacement for Perl threads::shared with forks()
   cond_timedwait( $variable, abs time, $lock_variable );
   cond_signal( $variable );
   cond_broadcast( $variable );
+  
+  bless( $variable, class name );
 
 =head1 DESCRIPTION
 
 The "forks::shared" pragma allows a developer to use shared variables with
 threads (implemented with the "forks" pragma) without having to have a
 threaded perl, or to even run 5.8.0 or higher.
+
+=head1 EXPORT
+
+C<share>, C<cond_wait>, C<cond_timedwait>, C<cond_signal>, C<cond_broadcast>,
+C<is_shared>, C<bless>
+
+See L<threads::shared/"EXPORT"> for more information.
+
+=head1 OBJECTS
+
+L<forks::shared> exports a versio of L<bless()|perlfunc/"bless REF"> that
+works on shared objects, such that blessings propagate across threads.  See
+L<threads::shared> for usage information and the L<forks> test suite for
+additional examples.
+
+=head1 NOTES
+
+As of L<threads::shared> 1.01, the splice function has not yet been implememted
+for arrays; however, L<forks::shared> fully supports splice on shared arrays.
 
 =head1 KNOWN PROBLEMS
 
@@ -433,10 +538,12 @@ These problems are known and will be fixed in the future:
 
 =item test-suite exits in a weird way
 
-Although there are no errors in the test-suite, the test harness thinks there
-is something wrong because of an unexpected exit() value.  Not sure what to do
-about this yet.  This appears to only occur on instances of perl built with
-native ithreads.
+Although there are no errors in the test-suite, the test harness sometimes
+thinks there is something wrong because of an unexpected exit() value.  This
+is an issue with Test::More's END block, which wasn't designed to co-exist
+with a threads environment and forked processes.  Hopefully, that module will
+be patched in the future, but for now, the warnings are harmless and may be
+safely ignored.
 
 =item shared variable in push() on shared array bombs
 
@@ -449,6 +556,16 @@ variable.
 
 This could be a generic problem with tie() in Perl, judging from some very
 recent discussion on p5p.
+
+=back
+
+=head1 CREDITS
+
+=over 2
+
+=item threads::shared
+
+For some of the XS code used for forks::shared exported bless function.
 
 =back
 
@@ -470,8 +587,8 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>, 
- 2005 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 
