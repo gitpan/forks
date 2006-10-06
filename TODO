@@ -23,7 +23,12 @@ Add a method to give the user run-time privilage control over unix socket
 file descriptors (for additional security control).
 
 Add extra logic in _join() to prevent hang on join (for processes that have
-already terminated).  May wish to enable to-the-letter ithread behavior,
+already terminated).  May be possible to check client socket when join for
+that thread is requested: if socket exception, then assume client terminated;
+otherwise, wait for client (regularly checking client socket connection to
+determine if it has prematurely closed).
+
+May wish to enable to-the-letter ithread behavior,
 where warning "thread failed to start: $!" is emitted when die occurs in
 a child thread.  If thread fails to start (fork fails), throw warning "thread
 failed to start: $!"?
@@ -47,7 +52,7 @@ conditions that forks should be intelligently trapping and handling.
 
 Add some shared handle tests.
 
-Reorganize internals to support a plug-in module style (either via subclass
+Finish reorganizing internals to support a plug-in module style (either via subclass
 or, more likely, function overloading) for better external module support to
 support alternative methods for handling shared variable data, locks, waiting,
 and signals.

@@ -1,8 +1,36 @@
+0.20	5 October 2006
+	Fixed rare thread start race condition where parent thread would block
+	indefinately if child thread were to spawn, complete, and exit before
+	the parent could obtain the TID associated with the child thread.
+
+	Corrected a few cases in server timedwait handling, cond_broadcast,
+	and cond_signal where a lock could be prematurely transferred to
+	another thread if the main thread (tid 0) were holding the lock at
+	the time the event expired.
+	
+	Modified cond_timedwait to support fractional seconds (if Time::HiRes
+	is loaded before forks).
+	
+	Minor changes to forks.xs for backwards compatibility with gcc 2.96.
+	
+	Minor cleanup in (forks.xs) bless reference handling.
+	
+	When using INET sockets, peer address is validated against the loopback
+	address (IPv4 127.0.0.1) before accepting the connection; otherwise,
+	socket is immediately closed and a warning is emitted.
+	
+	Added THREADS_IP_MASK env param to allow override of default IP mask
+	filter.
+	
+	Misc cleanup of internal server environment variable handling.
+	
+	Moved some server code into separate subroutines.
+	
 0.19	21 May 2006
 	Implemented an exported bless() function allow transparent bless()
 	across threads with forks::shared.
 	
-	Implemented exported is_thread function in forks::shared.
+	Implemented exported is_shared function in forks::shared.
 	
 	Implemented custom CHLD signal handler to cleanup zombie process.
 	This change was introduced to resolve an issue on some platforms

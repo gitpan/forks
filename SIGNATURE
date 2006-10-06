@@ -1,5 +1,5 @@
 This file contains message digests of all files listed in MANIFEST,
-signed via the Module::Signature module, version 0.53.
+signed via the Module::Signature module, version 0.55.
 
 To verify the content in this distribution, first make sure you have
 Module::Signature installed, then type:
@@ -14,21 +14,21 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 c38e2c10cfb6682f2c13492c098913b9019159dd CHANGELOG
+SHA1 c6d3f5bcd75766540fa389c36017c805d3dd5a79 CHANGELOG
 SHA1 a98cd1a71bcbce788b442823489493fb4ce2760e MANIFEST
 SHA1 dcdd8ad4e13996bc2efc50879887e6be196ca416 MANIFEST.skip
-SHA1 06e55bf48e8730a381622d666d828343934d7bca META.yml
+SHA1 42e0a7ba846a55afdada47f07a9d1b920a5d225a META.yml
 SHA1 bef92733a47d9d5a4accff212d75854eb6542315 Makefile.PL
 SHA1 144d17cb1edaaf042a6cd66cff053ad6da3b6cee README
-SHA1 2479f8245d68d87795d60dce1a7e808f7e33dea4 TODO
+SHA1 9b77549c28d017dffb4dbfcdd97cdd44a777f237 TODO
 SHA1 9d5077e69f56deceaaf157246767e69ad8f0efce VERSION
-SHA1 c02346978af03ac321278642c20c820c72c6b8f0 forks.xs
-SHA1 9d9e2b43cae8fafeb12d9070e3be33c878d9672e lib/forks.pm
-SHA1 c4c59dcc63c11ccb538b9a1e6202af86f9fb26dd lib/forks/shared.pm
-SHA1 be9352e5817314e930d49a457d965357c9d46f26 lib/threads/shared/array.pm
-SHA1 a1faffc400e154d7ca33d46632a8a59776938ed3 lib/threads/shared/handle.pm
-SHA1 7cc80f6299dd1f67e00db8020a7ccc8a67ed58d7 lib/threads/shared/hash.pm
-SHA1 27c3769d18eda49552b2d530f0e32011ef22cb51 lib/threads/shared/scalar.pm
+SHA1 c0036ca11ee1a368c7ddc940c59dbc81c2c22386 forks.xs
+SHA1 5506b5e7f749e249997bef7adb2923699b991b24 lib/forks.pm
+SHA1 cfd688f9f1a6b9bf6d97e5923c1a70d1c6c5e01e lib/forks/shared.pm
+SHA1 64e3c0dc4261d943fdac225ff78988e2e1738452 lib/threads/shared/array.pm
+SHA1 36cacd19c80d0b9609e0cb98ccd78f3a496d42a6 lib/threads/shared/handle.pm
+SHA1 6ea5ecde19850e8de22a6926f61af386dd3a4267 lib/threads/shared/hash.pm
+SHA1 ddf98735648c8df95f162effce9601dc692e2e9d lib/threads/shared/scalar.pm
 SHA1 3150811824d7da69c297db623fd5b232c7cca503 ppport.h
 SHA1 ade144295865dabe3bbea2648f11087058bcaccc t/forks01.t
 SHA1 79ff1cf301bc2aa17174482d077b270007e99ace t/forks02.t
@@ -38,7 +38,7 @@ SHA1 0cbabe5534118d746aa8a4d5e3e55d306f2ddc45 t/forks99.t
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.2.1 (Cygwin)
 
-iD8DBQFEcSvBQwn7DcpJEO4RAv4MAKC6wy57Nu8vVUt4WLg72J9lKY3AxgCgsrbS
-uVkOJNMM36RW5hPfnNe4I9I=
-=P2Lo
+iD8DBQFFJbnNQwn7DcpJEO4RAknUAKDVodid0amcm5yHBZLpV0b6ulLsqACeI3K3
+RMDK+kAaGKLJs4OK4qkPJvM=
+=dPhy
 -----END PGP SIGNATURE-----

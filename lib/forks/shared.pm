@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.19';
+$VERSION = '0.20';
 
 package threads::shared;  # but we're masquerading as threads::shared.pm
 
@@ -594,6 +594,6 @@ and/or modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<forks>, L<threads>.
+L<threads::shared>, L<forks>, L<forks::BerkeleyDB::shared>.
 
 =cut

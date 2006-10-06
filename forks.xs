@@ -187,7 +187,7 @@ cond_timedwait(SV *ref, double epochts, ...)
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_timedwait",0)));
         XPUSHs(sv_2mortal(newRV_inc(ref)));
-        XPUSHs(sv_2mortal(newSVnv(abs(epochts))));
+        XPUSHs(sv_2mortal(newSVnv(epochts)));
         if (items > 2)
             XPUSHs(sv_2mortal(newRV_inc(ref2)));
         PUTBACK;
@@ -293,11 +293,11 @@ bless(SV *ref, ...)
         (void)sv_bless(ref, stash);
         ST(0) = sv_2mortal(ref);
         
-        myref = SvRV(sv_mortalcopy(ref));
-        if(SvROK(myref))
+        myref = SvRV(ref);
+        if(SvROK(myref)) {
             myref = SvRV(myref);
+        }
 
-        dSP;
         ENTER;
         SAVETMPS;
 

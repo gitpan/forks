@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.19';
+$VERSION = '0.20';
 
 package threads; # but in fact we're masquerading as threads.pm
 
@@ -59,7 +59,10 @@ EOD
 #---------------------------------------------------------------------------
 
 # Global debug flag
-# Global socket type flag
+# Global socket server Nice value
+# Global CHLD force IGNORE flag
+# Global UNIX socket flag
+# Global INET socket IP mask regex value
 # Do this at compile time
 #  If there is a THREADS_DEBUG specification
 #   Untaint value
@@ -76,39 +79,56 @@ EOD
 #   Make THREADS_UNIX a false constant: default to INET sockets
 
 my $DEBUG;
-my $NICE;
+my $SERVER_NICE;
 my $FORCE_SIGCHLD_IGNORE;
 my $THREADS_UNIX;
+my $INET_IP_MASK;
 
 BEGIN {
     if (exists $ENV{'THREADS_DEBUG'}) {
         $ENV{'THREADS_DEBUG'} =~ m#^(.*)$#s;
         $DEBUG = $1;
-        *DEBUG = sub () { $DEBUG };
     } else {
-        *DEBUG = sub () { 0 };
+        $DEBUG = 0;
     }
+    *DEBUG = sub () { $DEBUG };
+
     if (exists $ENV{'THREADS_NICE'}) {
         $ENV{'THREADS_NICE'} =~ m#^(.*)$#s;
-        $NICE = $1;
-        *NICE = sub () { $NICE };
+        $SERVER_NICE = $1;
     } else {
-        *NICE = sub () { 0 };
+        $SERVER_NICE = 0;
     }
+
     if (exists $ENV{'THREADS_SIGCHLD_IGNORE'}) {
         $ENV{'THREADS_SIGCHLD_IGNORE'} =~ m#^(.*)$#s;
         $FORCE_SIGCHLD_IGNORE = $1;
-        *FORCE_SIGCHLD_IGNORE = sub () { 1 };
     } else {
-        *FORCE_SIGCHLD_IGNORE = sub () { 0 };
+        $FORCE_SIGCHLD_IGNORE = 0;
     }
+
     my $threads_socket_unix = '/var/tmp/perlforks.';
     if (defined $ENV{'THREADS_SOCKET_UNIX'} && $ENV{'THREADS_SOCKET_UNIX'} ne "") {
         #$ENV{'THREADS_SOCKET_UNIX'} =~ m#^(.*)$#s;
         $THREADS_UNIX = $threads_socket_unix;
-        *THREADS_UNIX = sub () { $THREADS_UNIX };
     } else {
-        *THREADS_UNIX = sub () { 0 };
+        $THREADS_UNIX = 0;
+    }
+
+    if (exists $ENV{'THREADS_IP_MASK'}) {
+        $ENV{'THREADS_IP_MASK'} =~ m#^(.*)$#s;
+        $INET_IP_MASK = $1;
+    } else {
+        $INET_IP_MASK = '^127\.0\.0\.1$';
+    }
+} #BEGIN
+
+# Import Time::HiRes if it was loaded before forks, for increased timing precision
+
+BEGIN {
+    if (exists $INC{'Time/HiRes.pm'}) {
+        require Time::HiRes;
+        import Time::HiRes qw(time);
     }
 } #BEGIN
 
@@ -166,12 +186,16 @@ my %CLONE;
 # Initialize hash (key: client) with the client object to thread id translation
 # Initialize hash (key: tid) with the thread id to process id translation
 # Initialize hash (key: pid) with the process id to thread id translation
+# Initialize hash (key: ppid) with the parent pid to child tid queue (value: array ref)
+# Initialize the thread parent pid
 
 my $NEXTTID = 0;
 my %TID2CLIENT;
 my %CLIENT2TID;
 my %TID2PID;
 my %PID2TID;
+my %PPID2CTID_QUEUE;
+my $PARENT_PID;
 
 # Initialize hash (key: tid) with tid's that have been detached
 # Initialize hash (key: tid) with results from threads
@@ -181,10 +205,10 @@ my %DETACHED;
 my %RESULT;
 my %JOINED;
 
-# Initialize hash (key: pid) with clients blocking of pid->tid conversion
+# Initialize hash (key: ppid) with clients blocking of ppid->ctid conversion
 # Initialize hash (key: tid) with clients blocking for join() result
 
-my %BLOCKING_PID2TID;
+my %BLOCKING_PPID2CTID_QUEUE;
 my %BLOCKING_JOIN;
 
 # Initialize hash (key: fq sub) with code references to tie subroutines
@@ -268,6 +292,7 @@ sub new {
 #  Die now if the fork failed
 
     my $pid;
+    my $ppid = $$;
     unless ($pid = fork) {
         _croak( "Could not fork child from pid $$, tid $TID\n" )
          unless defined( $pid );
@@ -277,6 +302,7 @@ sub new {
 #  Save the result
 #  And exit the process
 
+        $PARENT_PID = $ppid;
         _init_thread();
         my @result;
         eval { @result = $sub->( @_ ); };
@@ -289,7 +315,7 @@ sub new {
 # Create an object for it and return it
 
     reapPid($pid) if $CUSTOM_SIGCHLD;
-    my ($tid) = _command( '_waitpid2tid',$pid );
+    my ($tid) = _command( '_waitppid2ctid',$$ );
     $class->_object( $tid,$pid );
 } #new
 
@@ -504,6 +530,7 @@ _log( " ! global startup" ) if DEBUG;
         _croak( "Could not start initial fork\n" ) unless defined( $SHARED );
         return &_server;
     }
+    $PARENT_PID = undef;    #this is main thread
     reapPid($SHARED) if $CUSTOM_SIGCHLD;
     _init_thread();
 } #forks::import
@@ -525,6 +552,7 @@ sub import {
 
 END {
 
+# Revert to simple CHLD handler to insure portable, reliable shutdown
 # If this process is not a thread (e.g. is the shared server)
 #  Shutdown the socket server
 #  Delete UNIX socket file if the socket file exists
@@ -532,6 +560,7 @@ END {
 # Indicate that this process has been shut down to the server
 # Mark this thread as shut down (so we won't send or receive anymore)
 
+    $SIG{CHLD} = 'IGNORE';
     unless (exists( $ISATHREAD{$$} )) {
        $QUERY->shutdown(2) if defined $QUERY;
        unlink($PORT) if $THREADS_UNIX && -S $PORT;
@@ -552,7 +581,7 @@ sub _server {
 # Set nice value if environment variable set and if we're running as root
 # Mark the parent thread id as detached
 
-    POSIX::nice( $NICE ) if $NICE && !$<;
+    POSIX::nice( $SERVER_NICE ) if $SERVER_NICE && !$<;
     $DETACHED{$NEXTTID} = undef;
 
 # Create the select object in which all the connections are stored
@@ -567,11 +596,11 @@ sub _server {
 
 # Initialize the number of polls
 # While we're running in the main dispatch loop
-#  If timedwaiting index expired flag set
-#   Translate timedwaiting hash to sorted (index) array of all events 
-#   Calculate next timedwaiting expiration event time
+#  Update timedwaiting index
+#  Load next event timedwaiting expiration time (if any)
 #  Wait until there is something to do or a cond_timedwaiting event has expired
 #  Increment number of polls
+#  Handle any timedwaiting events that may have expired
 
     my $polls = 0;
     while ($RUNNING) {
@@ -580,65 +609,34 @@ if (DEBUG) {
  _log( " ! $clients>>" ) if $clients;
 }
         my $write = (each %WRITE) || '';
-        my $timedwaiting_next_event;
-        if ($TIMEDWAITING_IDX_EXPIRED) {
-            @TIMEDWAITING_IDX = ();
-            $timedwaiting_next_event = undef;
-            if (keys %TIMEDWAITING) {
-                push @TIMEDWAITING_IDX, map($_, sort {$a->[2] <=> $b->[2]} map(@{$TIMEDWAITING{$_}}, keys %TIMEDWAITING));
-                $timedwaiting_next_event = $TIMEDWAITING_IDX[0]->[2] if @TIMEDWAITING_IDX;
-            }
-            $TIMEDWAITING_IDX_EXPIRED = 0;
-        }
+        _update_timedwaiting_idx();
+        my $timedwaiting_next_event = @TIMEDWAITING_IDX ? $TIMEDWAITING_IDX[0]->[2] : undef;
         my $timedwaiting_delay = defined $timedwaiting_next_event ? $timedwaiting_next_event - time() : .001;
         my @reading = $select->can_read( ($write ? .001 : @TIMEDWAITING_IDX ? ( $timedwaiting_delay > 0 ? $timedwaiting_delay : .001 ) : undef) );
 _log( " ! <<".@reading ) if DEBUG and @reading;
         $polls++;
-
-#  For all timed wait events
-#   Obtain the tid, time, and ordinal event
-#   If this timed event is expired and a timed event exists for this ordinal
-#    Parse all timed events
-#     If current event in list of timed events is the matching event to what has expired
-#      Get the tid and target lock ordinal of the event
-#      Delete event from list & expire timed event index
-#      If ordinal is currently locked
-#       Signal this variable for when the target locked variable is unlocked later
-#      Else (ordinal not locked)
-#       Assign lock to this tid
-#       Immediately notify blocking thread that it should continue
-#   Else last loop: minimize index parsing, as when current event isn't expired, remaining (ordered) events in array aren't either
-
-        foreach (@TIMEDWAITING_IDX) {
-            my (undef, $ordinal, $time, undef, $id) = @{$_};
-            if ($time <= time() && defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
-                for (my $i = 0; $i < scalar @{$TIMEDWAITING{$ordinal}}; $i++) {
-                    if ($TIMEDWAITING{$ordinal}->[$i]->[4] == $id) {
-                        my ($tid, $l_ordinal) = @{splice(@{$TIMEDWAITING{$ordinal}}, $i, 1)}[0,3];
-                        delete $TIMEDWAITING{$ordinal} unless @{$TIMEDWAITING{$ordinal}};
-                        $TIMEDWAITING_IDX_EXPIRED = 1;
-                        if ($LOCKED[$l_ordinal]) {
-                            push @{$TIMEDWAITING_EXPIRED[$ordinal]}, [$tid, $l_ordinal];
-                        } else {
-                            $LOCKED[$l_ordinal] = $tid;
-                            $WRITE{$TID2CLIENT{$tid}} = $false;
-                        }
-                        last;
-                    }
-                }
-            } else { 
-                last;
-            }
-        }
+        _handle_timedwaiting();
         
 #  For all of the clients that have stuff to read
 #   If this is a new client
 #    Accept the connection
+#    If using INET sockets
+#     Check if client is in the allow list
+#      Immediately close client socket if not in allow list
+#      And reloop
 #    Make sure the client is non-blocking
 
         foreach my $client (@reading) {
             if ($client == $QUERY) {
                 $client = $QUERY->accept();
+                unless ($THREADS_UNIX) {
+                    if ($INET_IP_MASK ne '' && $client->peerhost() !~ m/$INET_IP_MASK/) {
+                        warn 'Thread server rejected connection: '
+                            .$client->peerhost().':'.$client->peerport().' does not match allowed IP mask'."\n";
+                        close( $client );
+                        next;
+                    }
+                }
                 _nonblock( $client );
 
 #    Save refs to real client object keyed to thread id and stringified object
@@ -774,7 +772,7 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
             my $pid = $TID2PID{$tid};
             delete( $TID2CLIENT{$tid} );
             delete( $CLIENT2TID{$client} );
-            delete( $PID2TID{$TID2PID{$tid}} );
+            delete( $PID2TID{$pid} );
             delete( $TID2PID{$tid} )
                if exists( $DETACHED{$tid} ) or exists( $JOINED{$tid} );
             delete( $DETACHED{$tid} );
@@ -786,6 +784,64 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
 _log( " ! global exit: did $polls polls" ) if DEBUG;
     CORE::exit();
 } #_server
+
+#---------------------------------------------------------------------------
+
+sub _update_timedwaiting_idx {
+
+#  If timedwaiting index expired flag set
+#   Translate timedwaiting hash to sorted (index) array of all events
+#   Reset index expired flag
+
+    if ($TIMEDWAITING_IDX_EXPIRED) {
+        @TIMEDWAITING_IDX = ();
+        if (keys %TIMEDWAITING) {
+            push @TIMEDWAITING_IDX, map($_, sort {$a->[2] <=> $b->[2]} map(@{$TIMEDWAITING{$_}}, keys %TIMEDWAITING));
+        }
+        $TIMEDWAITING_IDX_EXPIRED = 0;
+    }
+} #_update_timedwaiting_idx
+
+#---------------------------------------------------------------------------
+
+sub _handle_timedwaiting {
+    
+#  For all timed wait events
+#   Obtain the tid, time, and ordinal event
+#   If this timed event is expired and a timed event exists for this ordinal
+#    Parse all timed events
+#     If current event in list of timed events is the matching event to what has expired
+#      Get the tid and target lock ordinal of the event
+#      Delete event from list & expire timed event index
+#      If ordinal is currently locked
+#       Signal this variable for when the target locked variable is unlocked later
+#      Else (ordinal not locked)
+#       Assign lock to this tid
+#       Immediately notify blocking thread that it should continue
+#   Else last loop: minimize index parsing, as when current event isn't expired, remaining (ordered) events in array aren't either
+
+    foreach (@TIMEDWAITING_IDX) {
+        my (undef, $ordinal, $time, undef, $id) = @{$_};
+        if ($time <= time() && defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
+            for (my $i = 0; $i < scalar @{$TIMEDWAITING{$ordinal}}; $i++) {
+                if ($TIMEDWAITING{$ordinal}->[$i]->[4] == $id) {
+                    my ($tid, $l_ordinal) = @{splice(@{$TIMEDWAITING{$ordinal}}, $i, 1)}[0,3];
+                    delete $TIMEDWAITING{$ordinal} unless @{$TIMEDWAITING{$ordinal}};
+                    $TIMEDWAITING_IDX_EXPIRED = 1;
+                    if (defined $LOCKED[$l_ordinal]) {
+                        push @{$TIMEDWAITING_EXPIRED[$ordinal]}, [$tid, $l_ordinal];
+                    } else {
+                        $LOCKED[$l_ordinal] = $tid;
+                        $WRITE{$TID2CLIENT{$tid}} = $false;
+                    }
+                    last;
+                }
+            }
+        } else { 
+            last;
+        }
+    }
+} #_handle_timedwaiting
 
 #---------------------------------------------------------------------------
 #  IN: 1 socket to put into nonblocking mode
@@ -866,7 +922,7 @@ sub _init_thread {
     my @param = _receive( $QUERY );
     _croak( "Received '$param[0]' unexpectedly\n" ) if $param[0] ne '_set_tid';
     $TID = $param[1];
-    _send( $QUERY,'_register_pid',$TID,$$,shift );
+    _send( $QUERY,'_register_pid',$TID,$$,$PARENT_PID,shift );
     _run_CLONE() if $TID;
     
 # Wait for result of registration, die if failed
@@ -1101,28 +1157,30 @@ sub _register_pid {
 #   If this is the first time this thread is being registered
 #    Register this thread
 #    Make sure we can do a reverse lookup as well
+#    Push tid on ppid2tid queue, if thread has a parent (e.g. not main thread)
 #    Mark the thread as detached if so requested
 #    Set status to indicate success
 
-    my ($client,$tid,$pid,$detach) = @_;
+    my ($client,$tid,$pid,$ppid,$detach) = @_;
     my $status = 0;
     if ($pid) {
         if ($TID2CLIENT{$tid}) {
             unless (exists $PID2TID{$pid}) {
                 $TID2PID{$tid} = $pid;
                 $PID2TID{$pid} = $tid;
+                push @{$PPID2CTID_QUEUE{$ppid}}, $tid if $ppid;
                 $DETACHED{$tid} = undef if $detach;
                 $status = 1;
             }
         }
 
-#   If there is a thread waiting for this pid/tid pair
+#   If thread has a parent and there is a thread waiting for this ppid/ctid pair
 #    Let that thread know
 #    And forget that it was waiting for it
 
-        if (my $blocking = $BLOCKING_PID2TID{$pid}) {
-            _pid2tid( $blocking,$pid );
-            delete( $BLOCKING_PID2TID{$pid} );
+        if ($ppid && (my $blocking = $BLOCKING_PPID2CTID_QUEUE{$ppid})) {
+            _ppid2ctid_shift( $blocking,$ppid );
+            delete( $BLOCKING_PPID2CTID_QUEUE{$ppid} );
         }
     }
 
@@ -1144,6 +1202,13 @@ sub _tid2pid { $WRITE{$_[0]} = _pack( $TID2PID{$_[1]} ) } #_tid2pid
 # OUT: 1 associated thread id
 
 sub _pid2tid { $WRITE{$_[0]} = _pack( $PID2TID{$_[1]} ) } #_pid2tid
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 process id of thread calling this method
+# OUT: 1 associated thread id
+
+sub _ppid2ctid_shift { $WRITE{$_[0]} = _pack( shift @{$PPID2CTID_QUEUE{$_[1]}} ); } #_ppid2ctid_shift
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -1213,14 +1278,14 @@ sub _detach {
 #  IN: 1 client socket
 #      2 process id to find associated thread id of
 
-sub _waitpid2tid {
+sub _waitppid2ctid {
 
 # If there is already a thread id for this process id, set that
 # Start waiting for the tid to arrive
 
-    return &_pid2tid if exists $PID2TID{$_[1]};
-    $BLOCKING_PID2TID{$_[1]} = $_[0];
-} #_waitpid2tid
+    return &_ppid2ctid_shift if defined $PPID2CTID_QUEUE{$_[1]} && @{$PPID2CTID_QUEUE{$_[1]}};
+    $BLOCKING_PPID2CTID_QUEUE{$_[1]} = $_[0];
+} #_waitppid2ctid
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -1530,7 +1595,7 @@ sub _signal {
     my ($tid, $l_ordinal);
     if (defined $WAITING[$ordinal] && ref($WAITING[$ordinal]) eq 'ARRAY' && @{$WAITING[$ordinal]}) {
         ($tid, $l_ordinal) = @{shift(@{$WAITING[$ordinal]})};
-        if ($ordinal == $l_ordinal || $LOCKED[$l_ordinal]) {
+        if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
             unshift( @{$LOCKING[$l_ordinal]}, $tid );
         } else {
             $LOCKED[$l_ordinal] = $tid;
@@ -1539,7 +1604,7 @@ sub _signal {
     }
     elsif (defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
         ($tid, $l_ordinal) = @{shift(@{$TIMEDWAITING{$ordinal}})}[0,3];
-        if ($ordinal == $l_ordinal || $LOCKED[$l_ordinal]) {
+        if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
             unshift( @{$LOCKING[$l_ordinal]}, $tid );
         } else {
             $LOCKED[$l_ordinal] = $tid;
@@ -1574,7 +1639,7 @@ sub _broadcast {
     if (defined $WAITING[$ordinal] && ref($WAITING[$ordinal]) eq 'ARRAY' && @{$WAITING[$ordinal]}) {
         foreach (@{$WAITING[$ordinal]}) {
             ($tid, $l_ordinal) = @{$_};
-            if ($ordinal == $l_ordinal || $LOCKED[$l_ordinal]) {
+            if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
                 unshift( @{$LOCKING[$l_ordinal]}, $tid );
             } else {
                 $LOCKED[$l_ordinal] = $tid;
@@ -1586,7 +1651,7 @@ sub _broadcast {
     if (defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
         foreach (@{$TIMEDWAITING{$ordinal}}) {
             ($tid, $l_ordinal) = @{$_}[0,3];
-            if ($ordinal == $l_ordinal || $LOCKED[$l_ordinal]) {
+            if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
                 unshift( @{$LOCKING[$l_ordinal]}, $tid );
             } else {
                 $LOCKED[$l_ordinal] = $tid;
@@ -1840,7 +1905,11 @@ forks - drop-in replacement for Perl threads using fork()
   use forks qw(debug);
   threads->debug( 1 );
 
+  # use forks as a drop-in replacement for an ithreads application
   perl -Mforks -Mforks::shared threadapplication
+  
+  # support fractional and use hi-res time for cond_timedwait events
+  perl -MTime::HiRes -Mforks -Mforks::shared threadapplication
 
 =head1 DESCRIPTION
 
@@ -1874,22 +1943,22 @@ been confirmed.
 
 This threads implementation allows you to use a standard, pre-forking Apache
 server and have the children act as threads (with the class method
-L<isthread>).  This is as yet untested within Apache, but should work.
+L</"isthread">).  This is as yet untested within Apache, but should work.
 
 =head2 same API as threads
 
 You should be able to run threaded applications unchanged by simply making
-sure that the "forks.pm" and "forks::shared.pm" modules are loaded, e.g. by
+sure that the "forks" and "forks::shared" modules are loaded, e.g. by
 specifying them on the command line.
 
 =head2 using as a development / demonstration tool
 
 Because you do not need a threaded Perl to use forks.pm, you can start
 prototyping threaded applications with the Perl executable that you are used
-to.  Just download the "forks.pm" package from CPAN and install that.  So
+to.  Just download and install the "forks" package from CPAN.  So
 the threshold for trying out threads in Perl has become much lower.  Even
-Perl 5.005 should in principle be able to support the forks.pm module: because
-of some issues with regards to the availability of XS features between
+Perl 5.005 should, in principle, be able to support the forks.pm module;
+however, some issues with regards to the availability of XS features between
 different versions of Perl, it seems that 5.6.0 (unthreaded) is what you need
 at least.
 
@@ -1897,22 +1966,24 @@ at least.
 
 This package has successfully been proven as stable and reliable in production 
 environments.  I have personally used it in high-availability, database-driven, 
-financial message processing server applications for more than a year now with 
+financial message processing server applications for more than two years now with 
 great success.  Also, unlike pure ithreads, forks.pm is fully compatible with all 
 perl modules, whether or not they have been updated to be ithread safe.  This 
 means that you do not need to feel limited in what you can develop as a threaded 
 perl application, a problem that continues to plague the acceptance of ithreads in
 production enviroments today.  Just handle these modules as you would when using a 
-standard fork: be sure to create new instances of or connections to resources where
+standard fork: be sure to create new instances of, or connections to, resources where
 a single instance can not be shared between multiple processes.
 
-The only major issue yet to tackle is the potentially slow (relative to pure 
-ithreads) performance of shared data and lock use.  If your application doesn't 
-depend on extensive semaphore use, and reads/writes from shared variables limitedly
-(such as using them primarily to deliver data to a child thread to process
-and the child thread uses a shared structure to return the result), then this 
-will likely not be an issue for your application.  See the TODO section
-regarding my plans to tackle this issue.
+The only major concern is the potentially slow (relative to pure ithreads) performance
+of shared data and locks.  If your application doesn't depend on extensive semaphore
+use, and reads/writes from shared variables moderately (such as using them primarily
+to deliver data to a child thread to process and the child thread uses a shared
+structure to return the result), then this will likely not be an issue for your
+application.  See the TODO section regarding plans to tackle this issue.
+
+Also, you may wish to try <forks::BerkeleyDB>, which has shown signifigant performance
+gains and consistent throughoutput in high-concurrency shared variable applications.
 
 =head1 REQUIRED MODULES
 
@@ -1948,7 +2019,7 @@ by the "forks" threads implementation.
    exit;              # can not return values, as thread is detached
  }
 
-The "isthread" class method attempt to make a connection with the shared
+The C<isthread> class method attempt to make a connection with the shared
 variables process.  If it succeeds, then the process will function as a
 detached thread and will allow all the threads methods to operate.
 
@@ -1967,18 +2038,26 @@ debugging output of the communication between threads to be output to STDERR.
 The format is still subject to change and therefore still undocumented.
 
 Debugging can B<only> be switched on by defining the environment variable
-THREADS_DEBUG.  If the environment variable does not exist when the forks.pm
+C<THREADS_DEBUG>.  If the environment variable does not exist when the forks.pm
 module is compiled, then all debugging code will be optimised away to create
 a better performance.  If the environment variable has a true value, then
 debugging will also be enabled from the start.
 
 =head1 EXTRA FEATURES
 
+=head2 INET socket IP mask
+
+For security, inter-thread communication INET sockets only will allow connections
+from the default local machine IPv4 loopback address (e.g 127.0.0.1).  However,
+this filter may be modified by defining the environment variable C<THREADS_IP_MASK>
+with a standard perl regular expression (or with no value, which would disable the
+filter).
+
 =head2 UNIX socket support
 
 For users who do not wish to (or can not) use TCP sockets, UNIX socket support
 is available.  This can be B<only> switched on by defining the environment
-variable THREADS_SOCKET_UNIX.  If the environment variable has a true value, then
+variable C<THREADS_SOCKET_UNIX>.  If the environment variable has a true value, then
 UNIX sockets will be used instead of the default TCP sockets.  Socket descriptors 
 are currently written to /var/tmp and given a+rw access by default (for cleanest 
 functional support on multi-user systems).
@@ -1998,8 +2077,13 @@ Some caveats that you need to be aware of.
 Because of the use of sockets for inter-thread communication, there is an
 inherent larger latency with the interaction between threads.  However, the
 fact that TCP sockets are used, may open up the possibility to share threads
-over more than one physical machine.  You can decrease some of this latency
-by using UNIX sockets (see L</"UNIX socket support">).
+over more than one physical machine.
+
+You may decrease some latencyby using UNIX sockets (see L</"UNIX socket support">).
+
+Also, you may wish to try <forks::BerkeleyDB>, which has shown signifigant performance
+gains and consistent throughoutput in applications requiring high-concurrency shared
+variable access.
 
 =head2 Modules that modify $SIG{CHLD}
 
@@ -2124,6 +2208,6 @@ and/or modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<threads>.
+L<threads>, L<forks::BerkeleyDB>.
 
 =cut
