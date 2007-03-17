@@ -3,7 +3,7 @@ package threads::shared::scalar;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.20';
+$VERSION = '0.21';
 use strict;
 use Scalar::Util;
 
@@ -27,7 +27,7 @@ sub TIESCALAR {
 # Return it as a blessed object
 
     my $class = shift;
-    bless \do{ my $o = @_ && Scalar::Util::reftype($_[0]) eq 'SCALAR' ? $_[0] : \undef },$class;
+    bless \do{ my $o = @_ && Scalar::Util::reftype($_[0]) eq 'SCALAR' ? $_[0] : \(my $s) },$class;
 } #TIESCALAR
 
 #---------------------------------------------------------------------------

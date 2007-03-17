@@ -1,5 +1,42 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.20';
+$VERSION = '0.21';
+
+use Config ();
+
+#---------------------------------------------------------------------------
+#  IN: 1 class
+#      2..N Hash of parameters to set
+
+sub set_deadlock_option {
+
+# Get the class
+# Get the options
+# Initialize variables for final option values
+# Set value for 'detect' option
+# Set value for 'period' option
+# Set value for 'resolve' option
+# Set value for 'resolve_signal' option
+# Send settings to server
+
+    my $class = shift;
+    my %opts = @_;
+    my ($detect, $period, $resolve, $signal);
+    $detect = $opts{detect} ? 1 : 0;
+    $period = $opts{period} + 0 if defined $opts{period};
+    $resolve = $opts{resolve} ? 1 : 0;
+    if (defined $opts{resolve_signal}) {
+        Carp::croak('Cannot signal threads without safe signals')
+            if threads::shared::_check_pl_signal_unsafe_flag();
+        Carp::croak("Unrecognized signal name or number: $opts{resolve_signal}")
+            unless grep(/^$opts{resolve_signal}$/,
+                map('SIG'.$_, split(/\s+/, $Config::Config{sig_name})),
+                split(/\s+/, $Config::Config{sig_name}),
+                split(/\s+/, $Config::Config{sig_num}));
+        $signal = $opts{resolve_signal};
+    }
+    threads::shared::_command( '_set_deadlock_option',
+        $detect,$period,$resolve,$signal );
+}
 
 package threads::shared;  # but we're masquerading as threads::shared.pm
 
@@ -7,16 +44,18 @@ package threads::shared;  # but we're masquerading as threads::shared.pm
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '1.01';
+$VERSION  = '1.04';
 $threads_shared = $threads_shared = 1;
 use strict;
 use warnings;
 
 # Make sure we can die with lots of information
 # Make sure we can find out about blessed references correctly
+# Load some additional list utility functions
 
 use Carp ();
 use Scalar::Util qw(reftype blessed refaddr);
+use List::MoreUtils;
 
 # If forks.pm is loaded
 #  Make sure we have a local copy of the base command handler on the client side
@@ -91,45 +130,59 @@ BEGIN {
 # standard Perl features
 
 #---------------------------------------------------------------------------
-#  IN: 1 class (ignored)
+#  IN: 1 class
 #      2..N subroutines to export (default: async only)
 
 sub import {
 
 # Lose the class
-# Do whatever threads::shared::import is supposed to do
+    my $class = shift;
 
-    shift;
-    _export( scalar(caller()),@_ );
-} #import
-
-#---------------------------------------------------------------------------
-#  IN: 1 class (ignored)
-#      2..N subroutines to export (default: async only)
-
-sub forks::shared::import {
-
-# Lose the class
-# If there seems to be a threads.pm loaded
+# If we forks is running in shadow mode
+#  Fake that forks::shared.pm was really loaded (if not set already)
+# Elsif there seems to be a threads.pm loaded
 #  Fake that threads::shared.pm was really loaded (if not set already)
-#  Perform the export needed 
-
-    shift;
-    if ($INC{'forks.pm'}) {
-        $INC{'threads/shared.pm'} ||= $INC{'forks::shared.pm'};
-        _export( scalar(caller()),@_ );
-
 # Elsif there are (real) threads loaded
 #  Die now indicating we can't mix them
 # Else (using forks::shared without either forks.pm or threads.pm)
 #  Die (we'll handle this maybe later)
 
-    } elsif ($INC{'threads.pm'}) {
+    if (defined $INC{'threads.pm'} && $forks::threads_override) {
+        $INC{'forks/shared.pm'} ||= $INC{'threads/shared.pm'}
+    } elsif (defined $INC{'forks.pm'}) {
+        $INC{'threads/shared.pm'} ||= $INC{'forks/shared.pm'};
+    } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
         _croak( "Can not mix 'use forks::shared' with real 'use threads'\n" );
     } else {
         _croak( "Must first 'use forks'\n" ); #for now
     }
-} #forks::shared::import
+
+# Enable deadlock options, if requested
+    
+    if ((my $idx = List::MoreUtils::firstidx(
+        sub { $_ eq 'deadlock' }, @_)) >= 0) {
+        if (ref $_[$idx+1] eq 'HASH') {
+            my (undef, $opts) = splice(@_, $idx, 2);
+            $class->set_deadlock_option(%{$opts});
+        } else {
+            splice(@_, $idx, 1);
+        }
+    }
+    
+# Perform the export needed 
+
+    _export( scalar(caller()),@_ );
+} #import
+
+BEGIN {
+
+# forks::shared and threads::shared share same import method
+# load set_deadlock_option into threads::shared namespace
+
+    *forks::shared::import = *forks::shared::import = \&import;
+    *set_deadlock_option = *set_deadlock_option
+        = \&forks::shared::set_deadlock_option;
+}
 
 #---------------------------------------------------------------------------
 
@@ -187,6 +240,27 @@ sub AUTOLOAD {
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
+#      2..N input parameters
+# OUT: 1..N output parameters
+
+sub SPLICE {
+
+# Die now if running in thread override mode
+# Obtain the object
+# Obtain the subroutine name
+# Handle the command with the appropriate data and obtain the result
+# Return whatever seems appropriate
+
+    Carp::croak('Splice not implemented for shared arrays')
+        if $forks::threads_override;
+    my $self = shift;
+    my $sub = $self->{'module'}.'::SPLICE';
+    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    wantarray ? @result : $result[0];
+} #SPLICE
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
 
 sub UNTIE {
 
@@ -230,7 +304,7 @@ sub _export {
 
     my $namespace = shift().'::';
     my @export = qw(share is_shared lock cond_wait cond_timedwait cond_signal cond_broadcast);
-    push @export, 'bless' if $threads::threads;
+    push @export, 'bless' if $threads::threads && $threads::threads;
     @export = @_ if @_;
     no strict 'refs';
     *{$namespace.$_} = \&$_ foreach @export;
@@ -256,13 +330,13 @@ sub _tie {
 # Make sure we can do clone detection logic
 # Set the type of variable to be blessed
 # Obtain the module name to be blessed inside the shared "thread"
-# Obtain the ordinal number for this tied variable
+# Obtain the ordinal number for this tied variable (don't pass ref if running in threads override mode)
 # Create the blessed object and return it
 
     $self->{'CLONE'} = $CLONE;
     $self->{'type'} = $type;
     $self->{'module'} ||= $class.'::'.$type;
-    $self->{'ordinal'} = _command( '_tie',$self,@_ );
+    $self->{'ordinal'} = _command( '_tie',$self,$forks::threads_override ? () : @_ );
     CORE::bless $self,$class;
 } #_tie
 
@@ -415,6 +489,7 @@ sub _remote {
 # If there is an ordinal number (if no object, there's no number either)
 #  If we're about to lock
 #   Mark the variable as locked in this thread
+#   Store some caller() info (for deadlock detection report use)
 #  Else if this is second case of _wait or _timedwait (unique signal and lock vars)
 #   Obtain the reference to the lock variable (pop it off stack)
 #   Create the reference type of that reference
@@ -429,6 +504,7 @@ sub _remote {
     if (my $ordinal = $object->{'ordinal'}) {
         if ($sub eq '_lock') {
             $LOCKED{$ordinal} = undef;
+            push @_, (caller())[2,1];
         } elsif (($sub eq '_wait' && scalar @_ > 0) || ($sub eq '_timedwait' && scalar @_ > 1)) {
             my $it2 = pop @_;
             my $ref2 = reftype $it2;
@@ -443,13 +519,18 @@ sub _remote {
                 $object2 = tied *{$it2};
             }
             if (my $ordinal2 = $object2->{'ordinal'}) {
-                _croak( "You need a lock before you can cond$sub" )
+                Carp::croak( "You need a lock before you can cond$sub" )
                  if not exists $LOCKED{$ordinal2};
                 push @_, $ordinal2;
             }
         } else {
-            _croak( "You need a lock before you can cond$sub" )
-             if not exists $LOCKED{$ordinal};
+            if (not exists $LOCKED{$ordinal}) {
+                if ($sub eq '_signal' || $sub eq '_broadcast') {
+                    warnings::warnif('threads', "cond$sub() called on unlocked variable");
+                } else {
+                    Carp::croak( "You need a lock before you can cond$sub" );
+                }
+            }
         }
 
 #  Execute the indicated subroutine for this shared variable
@@ -462,7 +543,7 @@ sub _remote {
 # No ordinal found, not shared!  Die!
 
     $sub = $sub eq '_lock' ? 'lock' : "cond$sub";
-    _croak( "$sub can only be used on shared values" );
+    Carp::croak( "$sub can only be used on shared values" );
 } #_remote
 
 #---------------------------------------------------------------------------
@@ -472,7 +553,7 @@ sub _remote {
 #---------------------------------------------------------------------------
 #  IN: 1 message to display
 
-sub _croak { return &Carp::confess } #_croak
+sub _croak { return &Carp::confess(shift) } #_croak
 
 #---------------------------------------------------------------------------
 
@@ -504,12 +585,26 @@ forks::shared - drop-in replacement for Perl threads::shared with forks()
   cond_broadcast( $variable );
   
   bless( $variable, class name );
+  
+  # Enable deadlock detection and resolution
+  use forks::shared deadlock => {
+    detect => 1,
+    resolve => 1
+  );
+  # or
+  threads::shared->set_deadlock_option(
+    detect  => 1,
+    resolve => 1
+  );
 
 =head1 DESCRIPTION
 
-The "forks::shared" pragma allows a developer to use shared variables with
+The C<forks::shared> pragma allows a developer to use shared variables with
 threads (implemented with the "forks" pragma) without having to have a
 threaded perl, or to even run 5.8.0 or higher.
+
+C<forks::shared> is currently API compatible with CPAN L<threads::shared>
+version C<1.05>.
 
 =head1 EXPORT
 
@@ -525,12 +620,110 @@ works on shared objects, such that blessings propagate across threads.  See
 L<threads::shared> for usage information and the L<forks> test suite for
 additional examples.
 
-=head1 NOTES
+=head1 EXTRA FEATURES
 
-As of L<threads::shared> 1.01, the splice function has not yet been implememted
-for arrays; however, L<forks::shared> fully supports splice on shared arrays.
+=head2 Deadlock detection and resolution
 
-=head1 KNOWN PROBLEMS
+In the interest of helping programmers debug one of the most common bugs in
+threaded application software, forks::shared supports a full deadlock
+detection and resolution engine.
+
+=head3 Automated detection and resolution
+
+There are two ways to enable these features: either at import time in a use
+statement, such as:
+
+    use forks::shared deadlock => { OPTIONS }
+    
+or during runtime as a class method call to C<set_deadlock_option>, like:
+
+    forks::shared->set_deadlock_option( OPTIONS );
+    #or
+    threads::shared->set_deadlock_option( OPTIONS );
+    
+where C<OPTIONS> may be a combination of any of the following:
+
+    detect         => 1 (enable) or 0 (disable)
+    period         => number of seconds between asynchronous polls
+    resolve        => 1 (enable) or 0 (disable)
+    resolve_signal => any supported POSIX signal
+    
+The C<detect> option enables deadlock detection.  By itself, this option
+enabled synchronous deadlock detection, which efficiently checks for
+potential deadlocks at lock() time.  If any are detected and warnings are
+enabled, it will print out details to C<STDERR> like the following example:
+
+    Deadlock detected:
+        TID   SV LOCKED   SV LOCKING   Caller
+          1           3            4   t/forks06.t at line 41
+          2           4            3   t/forks06.t at line 46
+
+The C<period> option, if set to a value greater than zero, is the number of
+seconds between asynchronous deadlock detection checks.  Asynchronous
+detection is useful for debugging rare, time-critical race conditions leading
+to deadlocks that may be masked by the slight time overhead introduced by
+synchronous detection on each lock() call.  Overall, it is less CPU intensive
+than synchronous deadlock detection.
+
+The C<resolve> option enables auto-termination of one thread in each deadlocked
+thread pair that has been detected.  As with the C<detect> option, C<resolve>
+prints out the action it performs to STDERR, if warnings are enabled.
+B<NOTE>: By default, C<resolve> uses SIGKILL to break deadlocks, so this
+feature should not be used in environments where stability of the rest of your
+application may be adversely affected by process death in this manner.
+
+The C<resolve_signal> option allows modification of the signal used by
+C<resolve>.  This may be useful if you wish to override a signal in your
+threads to close sensitive resources or print out additional debugging
+information before exit.  Signals may be any trappable ones given by number,
+as defined by L<POSIX> ":signal_h" export, or the name of the signal, such as
+'TERM' and 'USR1', or 'SIGTERM' and 'SIGUSR1'.
+
+For example:
+
+    use forks;
+    use POSIX ':signal_h';
+    use forks::shared
+        deadlock => {detect=> 1, resolve => 1, resolve_signal => SIGTERM};
+    use Carp 'cluck'
+    $SIG{TERM} = sub{ cluck "Caught TERM signal"; CORE::exit(); };
+
+=head3 Manual detection
+
+If you wish to check for deadlocks without enabling automated deadlock
+detection, forks provides an additonal thread object method,
+
+    $thr->is_deadlocked()
+
+that reports whether the thread in question is currently
+deadlocked.  This method may be used in conjunction with the C<resolve>
+deadlock option to auto-terminate offending threads.
+
+=head2 Splice on shared array
+
+As of at least L<threads::shared> 1.05, the splice function has not been
+implememted for arrays; however, L<forks::shared> fully supports splice on
+shared arrays.
+
+=head2 share() doesn't lose value for arrays and hashes
+
+In the standard Perl threads implementation, arrays and hashes are
+re-initialized when they become shared (with the share()) function.  The
+share() function of forks::shared does B<not> initialize arrays and hashes
+when they become shared with the share() function.
+
+This B<could> be considered a bug in the standard Perl implementation.  In any
+case this is an inconsistency of the behaviour of threads.pm and forks.pm.
+Maybe a special "totheletter" option should be added to forks.pm to make
+forks.pm follow this behaviour of threads.pm to the letter.
+
+NOTE: If you do not have a natively threaded perl and you have installed and
+are using forks in "threads.pm" override mode (where "use threads" loads
+forks.pm), then this module will explicitly emulate the behavior of standard
+threads::shared and lose value for arrays and hashes with share().
+Additionally, array splice function will become a no-op with a warning.
+
+=head1 CAVIATS
 
 These problems are known and will be fixed in the future:
 
@@ -568,13 +761,6 @@ recent discussion on p5p.
 For some of the XS code used for forks::shared exported bless function.
 
 =back
-
-=head1 ORIGINAL AUTHOR CREDITS
-
-Arthur Bergman for Hook::Scope (from which I swiped the code to have locked
-variables automatically unlock upon leaving the scope they were locked in) and
-threads::shared (from which I swiped the code to create references from the
-parameter list passed to a subroutine).
 
 =head1 CURRENT MAINTAINER
 

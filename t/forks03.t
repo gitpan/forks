@@ -1,8 +1,11 @@
 #!/usr/local/bin/perl -w
-BEGIN {             # Magic Perl CORE pragma
+BEGIN {
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
         @INC = '../lib';
+    } elsif (!grep /blib/, @INC) {
+        chdir 't' if -d 't';
+        unshift @INC, ('../blib/lib', '../blib/arch');
     }
 }
 
@@ -144,22 +147,12 @@ ok($$hobj{'hash'}->isa('niy') == 1, "hash in hash object method isa() does work"
 ok($$hobj{'array'}->isa('gnay') == 1, "array in hash object method isa() does work");
 ok($$hobj{'scalar'}->isa('zab') == 1, "scalar in hash object method isa() does work");
 
-package oof;
-sub test_me { return "yes1"; }
+sub oof::test_me { return "yes1"; }
+sub rab::test_me { return "yes2"; }
+sub zab::test_me { return "yes3"; }
+sub niy::test_me { return "yes4"; }
+sub gnay::test_me { return "yes5"; }
 
-package rab;
-sub test_me { return "yes2"; }
-
-package zab;
-sub test_me { return "yes3"; }
-
-package niy;
-sub test_me { return "yes4"; }
-
-package gnay;
-sub test_me { return "yes5"; }
-
-package main;
 ok($hobj->test_me eq "yes1", "hash object method does work");
 ok($aobj->test_me eq "yes2", "array object method does work");
 ok($sobj->test_me eq "yes3", "scalar object method does work");
@@ -169,3 +162,5 @@ ok($$aobj[2]->test_me eq "yes3", "scalar in array object method does work");
 ok($$hobj{'hash'}->test_me eq "yes4", "hash in hash object method does work");
 ok($$hobj{'array'}->test_me eq "yes5", "array in hash object method does work");
 ok($$hobj{'scalar'}->test_me eq "yes3", "scalar in hash object method does work");
+
+1;

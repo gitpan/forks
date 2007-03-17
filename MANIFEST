@@ -1,4 +1,5 @@
 CHANGELOG
+CREDITS
 forks.xs
 lib/forks.pm
 lib/forks/shared.pm
@@ -16,6 +17,10 @@ SIGNATURE
 t/forks01.t
 t/forks02.t
 t/forks03.t
+t/forks04.t
+t/forks05.t
+t/forks06.t
+t/forks07.t
 t/forks20.t
 t/forks99.t
 TODO

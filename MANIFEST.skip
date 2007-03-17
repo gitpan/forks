@@ -30,6 +30,6 @@
 \bcover_db\b
 
 # Avoid forks compiled files
-^forks\.bs$
-^forks\.c$
-^forks\.o$
+\bforks\.bs$
+\bforks\.c$
+\bforks\.o$

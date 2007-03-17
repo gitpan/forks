@@ -1,6 +1,176 @@
+0.21	17 March 2007
+	This revision includes *many* core changes and improvements, so be sure
+	to perform full testing with existing forks-enabled applications before
+	upgrading.
+	
+	All changes have been exposed to extensive regression testing, so you may
+	expect all new features to be reasonably stable unless otherwise noted
+	with a *WARNING* tag.
+
+
+	***** New features *****
+	
+	Enabled complete thread context support.  Be sure to specify the context,
+	either implicit or directly.  This also means you may not get what you
+	expect if you return values in a context that doesn't match your spec.
+	
+	Add optional, automatic deadlock detection (warnings) in threads::shared.
+	Also added is_deadlocked() method (manual deadlock detection) for threads.
+	
+	Added set_deadlock_option class method to forks::shared (threads::shared).
+
+	Aware of thread params at thread creation, e.g. threads->new({}, sub {});
+	
+	Added complete support for $thr->wantarray and thread->wantarray.
+	
+	Added complete support for thread state: is_running, is_joinable,
+	is_detached().
+	
+	Added additional support to threads->list(), with package variables:
+	threads::all, threads::running, and threads::joinable.
+	
+	Added support for 'use forks qw(stringify)'where the TID is returned
+	for a threads object in string context.
+	
+	Added detailed last known state of all threads on main thread exit (or
+	server process unexpected exit), like:
+		Perl exited with active threads:
+				x running and unjoined
+				y finished and unjoined
+				z running and detached
+
+	Added stubs for get_stack_size and set_stack_size, although they don't
+	do anything (yet).
+	
+	Added support for threads->_handle and $thr->_handle, although it
+	currently does not guarantee a reference to the same memory address
+	each time (will be addressed in a later release).
+	
+	Added support for inter-thread signaling using $thr->kill('SIG...').
+	*WARNING* This feature is still highly experimental and has known
+	issues when sending a signal to a process sending or receiving socket
+	data pertaining to a threads operation.  This will be addressed in
+	a future release.
+	
+	Added question during build process to allow forks to override threads
+	namespace if target Perl does not have native threading built in.
+	Added POD describing this feature and behavior implications.
+	
+	
+	***** Bug fixes *****
+
+	Corrected bug in threads::shared::scalar that prevented tieing without
+	a pre-existing scalar reference.
+	
+	Localizing $? in END block to insure that main thread exit code isn't
+	accidentally overwritten during shutdown.
+	
+	Corrected several cases where internal auto-vivification was not intended,
+	but might cause internal variable state issues.
+	
+	Corrected bug where fork() followed by ->isthread() in a child process
+	while parent process (a thread) was already waiting on a separate thread
+	could cause internal synchronization issues.
+	
+	Corrected bug in ->list where scalar context would return last object,
+	not the number of waiting threads.
+
+	Added additional protection in END block against external fork() occuring
+	outside our knowledge causing synchronization havoc with the thread process
+	group.
+
+	Removed delete from %DETACHED on thread exit, as this property is used for
+	internal thread type and state checking.
+	
+	Updated some error handling to suppress some undefined variable warnings.
+
+
+	***** Internal behavior improvements *****
+
+	Added silent overload of Config.pm 'useithreads' property to insure all
+	modules and scripts see a true value when forks is loaded.
+	
+	Added explicit signal trapping of all untrapped normal and error signals
+	for consistent and safe thread exit behavior.
+
+	Added defensive error handling around non-blocking server sockets to
+	protect against interruptions or busy resources during read or write.
+	This should also make UNIX socket support more stable on certain target
+	architectures.
+	
+	Added defensive logic to cleanup internal resources for threads that
+	appear to have exited in an unsafe manner (and that may have left
+	forks::shared resources in a unclean state) or were terminated with SIGKILL.
+	
+	Rewrote _length(), _send(), and _receive() internal functions to protect
+	against signal interruptions, busy resources, socket disconnections, full
+	socket buffers, and miscellaneous socket errors, including adding retry
+	logic where appropriate.
+	
+	Updated _join() server function with much more intelligent logic regarding
+	the state of a thread during the join process and a few more error cases
+	that it needed to check for.
+
+	threads->yield() now does a 1 ms sleep.
+	
+	
+	***** Threads API consistency changes *****
+
+	Can now signal unlocked variable using cond_signal and cond_broadcast.
+	Note: Signaling locked returns 1; signaling unlocked returns undef.
+	
+	Modified lock, cond_signal, and cond_broadcast to return undef (instead
+	of 1) to be consistent with threads.pm.
+	
+	Overloaded != for thread objects.
+	
+	A failed thread spawn (fork) now prints a warning and returns undef
+	instead of dieing out.
+	
+	Detach twice on the same thread now throws an error.
+	
+	Improved format and content of internal warnings, and warnings now
+	respect warnings state in caller for category 'threads'.
+	
+	Bumped threads $VERSION to 1.26, threads::shared to 1.04 to match
+	version-supported features and behavior.
+	
+	
+	*** Miscellaneous changes ***
+	
+	Implemented initial framework for better message handling.  This should
+	help reduce overall CPU usage, and hopefully improve performance, using
+	custom filter definition for request and response messages that do not
+	require Storable freeze/thaw.  Requests that currently implement this 
+	are: _lock and _unlock.  Responses that currently implement this are:
+	any generic boolean response.
+	
+	Made Time::HiRes a prerequisite now.  This means that fractional
+	cond_timedwait is now supported by default.
+	
+	Optimized sigset masking: now only one set is created at compile time
+	and reused during execution.
+	
+	Now safely runs in taint mode when any potentially tainted environment
+	vars are defined.
+	
+	Suppressing unnecessary warnings in the case that 'test' does not exist
+	in /bin or /usr/bin.
+	
+	Silenced thread socket errors during thread shutdown process, unless
+	debugging is enabled.
+	
+	Added basic blocking join poll checks, to help prevent against forever
+	blocking join() cases in abnormal thread death circumstances.
+	
+	Thread shutdown now expects a response (to insure synchronized shutdown
+	agreement with server process).
+	
+	General improvements in thread shutdown stability (primarily server-side).
+	
 0.20	5 October 2006
 	Fixed rare thread start race condition where parent thread would block
-	indefinately if child thread were to spawn, complete, and exit before
+	indefinitely if child thread were to spawn, complete, and exit before
 	the parent could obtain the TID associated with the child thread.
 
 	Corrected a few cases in server timedwait handling, cond_broadcast,

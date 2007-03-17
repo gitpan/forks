@@ -42,6 +42,23 @@ exec_leave(pTHX_ U32 both) {
 MODULE = forks               PACKAGE = threads::shared
 
 #----------------------------------------------------------------------
+# OUT: 1 boolean value indicating whether unsafe signals are in use 
+
+bool
+_check_pl_signal_unsafe_flag()
+    PREINIT:
+        U32 flags;
+    CODE:
+        flags = PL_signals & PERL_SIGNALS_UNSAFE_FLAG;
+        if (flags == 0) {
+            RETVAL = 0;
+        } else {
+            RETVAL = 1;
+        }
+    OUTPUT:
+        RETVAL
+
+#----------------------------------------------------------------------
 #  IN: 1 any variable (scalar,array,hash,glob)
 # OUT: 1 reference to that variable
 

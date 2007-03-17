@@ -1,12 +1,12 @@
 require 5.006;
 
 BEGIN {
-    die "Doesn't make sense to install 'forks' on this system.\n"
+    die "'forks' is currently not supported on this system (Win32).\n"
      if ($^O =~ m#Win32# or $ENV{THIS_IS_WIN32});
 } #BEGIN
 
 use strict;
-use ExtUtils::MakeMaker;
+use ExtUtils::MakeMaker 6.10;
 eval "use Devel::Required";
 
 my $old = 'forks.xs';
@@ -35,6 +35,63 @@ unlink $old       or die "Could not remove $old\n";
 rename $new,$old  or die "Could not rename $new to $old\n";
 chmod 0444, $old  or die "Could not change permissions on $old\n";
 
+use Config ();
+my $simulate_useithreads = 0;
+unless ($Config::Config{useithreads}) {
+    # Taken from ExtUtils::MakeMaker 6.16 (Michael Schwern) so that 
+    # the prompt() function can be emulated for older versions of ExtUtils::MakeMaker.
+    my $isa_tty = -t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT));
+    if ($isa_tty) {
+        print "\nIt appears your perl was not built with native ithreads.\n"
+            ."\nWould you like to create references to forks, such that\n"
+            ."using 'use threads' and 'use threads::shared' will quietly\n"
+            ."load forks and forks::shared? [no] ";
+        if (<STDIN> =~ /^y(?:es)?$/) {
+            $simulate_useithreads = 1;
+            print "\n";
+            print "NOTE: Be sure to 'make install UNINST=1' when installing\n"
+               ."      module to insure that old threads.pm modules do not\n"
+               ."      shadow the new forks modules.\n";
+            print "\n";
+        }
+    }
+}
+
+
+if ($simulate_useithreads) {
+#    eval {
+#package MY; # so that "SUPER" works right
+#sub all_target {
+#    my $inherited = shift->SUPER::all_target(@_);
+#    $inherited .= 
+#        qq{\t-(\$(TEST_F) blib/lib/threads.pm && \$(RM_F) blib/lib/threads.pm) || \$(NOOP)\n}
+#        .qq{\t-(\$(TEST_F) blib/lib/threads/shared.pm && \$(RM_F) blib/lib/threads/shared.pm) || \$(NOOP)\n}
+#        .qq{\t-\$(CP) blib/lib/forks.pm blib/lib/threads.pm\n}
+#        .qq{\t-\$(CP) blib/lib/forks/shared.pm blib/lib/threads/shared.pm\n}
+#        .qq{\t-\$(TEST_F) blib/lib/threads.pm && perl -pi -e 's\/(\\\$\$forks::threads_override =\\s*) 0;\/\$\$1 1;\/' blib/lib/threads.pm || \$(NOOP)\n};
+#    $inherited;
+#};
+#    };
+    
+#    eval {
+require ExtUtils::MM_Any; #kludge: MY::all_target doesn't work (as of 6.17)
+require ExtUtils::MM_Unix;
+*ExtUtils::MM_Any::__all_target = \&ExtUtils::MM_Any::all_target;
+*ExtUtils::MM_Unix::__all_target = \&ExtUtils::MM_Unix::all_target;
+*ExtUtils::MM_Any::all_target = *ExtUtils::MM_Unix::all_target = sub {
+    my $inherited = shift->__all_target(@_);
+    $inherited .= 
+        qq{\t-(\$(TEST_F) blib/lib/threads.pm && \$(RM_F) blib/lib/threads.pm) || \$(NOOP)\n}
+        .qq{\t-(\$(TEST_F) blib/lib/threads/shared.pm && \$(RM_F) blib/lib/threads/shared.pm) || \$(NOOP)\n}
+        .qq{\t-\$(CP) blib/lib/forks.pm blib/lib/threads.pm\n}
+        .qq{\t-\$(CP) blib/lib/forks/shared.pm blib/lib/threads/shared.pm\n}
+        .qq{\t-\$(TEST_F) blib/lib/threads.pm && perl -pi -e 's\/(\\\$\$forks::threads_override =\\s*) 0;\/\$\$1 1;\/' blib/lib/threads.pm || \$(NOOP)\n};
+    $inherited;
+#};
+    };
+}
+
+package main;
 WriteMakefile (
  NAME       => "forks",
  AUTHOR     => 'Eric Rybski (rybskej@yahoo.com)',
@@ -42,11 +99,14 @@ WriteMakefile (
  VERSION_FROM   => 'lib/forks.pm',
 
  PREREQ_PM  => {@extra_prereq,qw(
-            Devel::Required     0
-            Scalar::Util        1.01
-            Storable            0
+            Devel::Required     0.07
+            List::MoreUtils     0.15
+            File::Spec          0
             IO::Socket          1.18
             reaper              0.03
+            Scalar::Util        1.01
+            Storable            0
+            Time::HiRes         0
                 )},
 (MM->can('signature_target') ? (SIGN => 1) : ()),
 );

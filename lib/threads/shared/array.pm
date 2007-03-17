@@ -3,7 +3,7 @@ package threads::shared::array;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.20';
+$VERSION = '0.21';
 use strict;
 use Scalar::Util;
 
@@ -92,8 +92,8 @@ sub SPLICE {
 # Obtain the offset to use
 # Adapt if it was to be relative from the end
 # Obtain the number of element to remove
-	
-	my $self = shift;
+    
+    my $self = shift;
     my $list = ${$self};
     my $size  = $self->FETCHSIZE;
     my $offset = @_ ? shift : 0;

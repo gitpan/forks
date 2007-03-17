@@ -1,8 +1,11 @@
 #!/usr/local/bin/perl -T -w
-BEGIN {				# Magic Perl CORE pragma
+BEGIN {
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
         @INC = '../lib';
+    } elsif (!grep /blib/, @INC) {
+        chdir 't' if -d 't';
+        unshift @INC, ('../blib/lib', '../blib/arch');
     }
 }
 
@@ -27,7 +30,7 @@ use Test::More tests => 6;
 {
 my @array : shared;
 my $tied = tied( @array );
-isa_ok( $tied,'threads::shared',	'check object type' );
+isa_ok( $tied,'threads::shared',    'check object type' );
 
 my @thread;
 my $count : shared;
@@ -46,10 +49,10 @@ $_->join foreach @thread;
 
 my $check;
 $check .= $_ foreach 1..$times;
-is( join('',@array),$check,		'check array contents' );
+is( join('',@array),$check,     'check array contents' );
 
 pop( @array ) foreach 1..$times;
-is( join('',@array),'',			'check array contents' );
+is( join('',@array),'',         'check array contents' );
 }
 
 #= HASH ===============================================================
@@ -57,7 +60,7 @@ is( join('',@array),'',			'check array contents' );
 {
 my %hash : shared;
 my $tied = tied( %hash );
-isa_ok( $tied,'threads::shared',	'check object type' );
+isa_ok( $tied,'threads::shared',    'check object type' );
 
 my @thread;
 my $count : shared;
@@ -81,10 +84,12 @@ my $check;
 $check .= ($_.$_) foreach 1..$times;
 my $hash;
 $hash .= ($_.$hash{$_}) foreach (sort {$a <=> $b} keys %hash);
-is( $hash,$check,			'check hash contents' );
+is( $hash,$check,           'check hash contents' );
 
 delete( $hash{$_} ) foreach 1..$times;
-is( join('',%hash),'',			'check hash contents' );
+is( join('',%hash),'',          'check hash contents' );
 }
 
 #======================================================================
+
+1;

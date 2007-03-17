@@ -1,15 +1,18 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         forks
-version:      0.20
+version:      0.21
 version_from: lib/forks.pm
 installdirs:  site
 requires:
-    Devel::Required:               0
+    Devel::Required:               0.07
+    File::Spec:                    0
     IO::Socket:                    1.18
+    List::MoreUtils:               0.15
     reaper:                        0.03
     Scalar::Util:                  1.01
     Storable:                      0
+    Time::HiRes:                   0
 
 distribution_type: module
 generated_by: ExtUtils::MakeMaker version 6.17

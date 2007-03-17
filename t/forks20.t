@@ -1,8 +1,11 @@
 #!/usr/local/bin/perl -T -w
-BEGIN {             # Magic Perl CORE pragma
+BEGIN {
     if ($ENV{PERL_CORE}) {
         chdir 't' if -d 't';
         @INC = '../lib';
+    } elsif (!grep /blib/, @INC) {
+        chdir 't' if -d 't';
+        unshift @INC, ('../blib/lib', '../blib/arch');
     }
 }
 
@@ -21,8 +24,6 @@ BEGIN {
     $reason = '';
     $reason = 'Thread::Queue not found'
      unless defined $Thread::Queue::VERSION;
-    $reason ||= 'Cannot test Thread::Queue with an unthreaded Perl'
-     unless $Config{'useithreads'};
 
     $tests = 1 if $reason;
 } #BEGIN
@@ -86,3 +87,5 @@ SKIP: {
 
 #------------------------------------------------------------------------
 } #SKIP
+
+1;

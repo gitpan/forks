@@ -1,58 +1,76 @@
-add a test to exercise inter-thread locking
+***** Future Features / Interface Changes *****
 
-move source filter from forks.pm to forks::shared.pm, although I doubt that
-there will be many cases where forks would only be used.
+Add support for thread exit feature.
+
+Add support for $thr->error() after ->join() feature.
+
+optimizations:
+- implement more methods using custom filters (to reduce Storable usage)
+- support alternate, faster locking mechanisms (filesystem and/or SysV shmem)
+- allow for shared memory as transport medium (how will we fix blocking?)
+
+Add a method to give the user run-time privilage control over unix socket 
+file descriptors (for additional security control).
+
+join() needs to be able to propegate (die) errors to threads.  Currently, it
+only return undef in error cases.
+
+Make thread objects shared in nature, such that their properties may be read
+across all threads.  Will make _handle more reliable, and allow for thread
+state params to be persisted.
+
+
+***** Issues to Address *****
 
 push with a shared scalar bombs:
  push( @shared,$shared );    # bombs
  push( @shared,$shared.'' ); # works
 
-optimizations:
-- Storable::freeze/thaw not always needed: check Thread::Serialize
-- change remote function names to command numbers: less traffic, no Storable?
-- allow for shared memory as transport medium (how will we fix blocking?)
-
-Global destruction sometimes causes strange errors when threads are still
-running.  Need a way to check for that.
-
-Signalling unlocked variables should become possible.  Maybe lock() the
-variable before signalling?  Probably not.  Simply taking away the check for
-the lock causes a deadlock at the moment, so that doesn't make much sense.
-
-Add a method to give the user run-time privilage control over unix socket 
-file descriptors (for additional security control).
-
-Add extra logic in _join() to prevent hang on join (for processes that have
-already terminated).  May be possible to check client socket when join for
+Add more defensive logic in _join() to prevent hang on join (for processes
+that have already terminated).  May wish to check client socket when join for
 that thread is requested: if socket exception, then assume client terminated;
 otherwise, wait for client (regularly checking client socket connection to
 determine if it has prematurely closed).
 
-May wish to enable to-the-letter ithread behavior,
-where warning "thread failed to start: $!" is emitted when die occurs in
-a child thread.  If thread fails to start (fork fails), throw warning "thread
-failed to start: $!"?
+Need to look into why some signals very rarely are not caught by threads
+(i.e. SIGTERM should cause thread to exit--but thread appears to have ignored
+signal.  Is this a side effect of Perl's safe signal handling mechanism?).
+The thread does appear to actually get the signal, but sometimes it doesn't
+seem to completely exit.
 
-Add support for new methods in threads.pm: kill, _handle, get_stack_size,
-set_stack_size (perhaps using BSD::Resource)
+Need to make signal per tid into a bitmask of all signals to send a process
+when the server gets around to it (to insure no signals get lost if 2+
+threads send different signals to same thread in same period).
 
-If main thread dies (and/or if shared process dies?), throw warning "A thread
-exited while N threads were running.", where N = number of processes (threads)
-still active.
+Further stabilize thread signaling, as a signal might interrupt a thread send()
+to the server and then shutdown the thread, resulting in potentially
+concatenated message data that would trigger a decoding error on the server.
+Idea is to use a file system indicator whenever thread is signaled, thus
+allowing the thread to quickly check who signaled it (either another thread
+or an external process).  In the case of another thread and if a custom
+signal handler has been installed by the user, it should finish the current
+message it was working on, then continue.  If it were from the system, it
+should propegate the error to the main thread and continue.
+
+In rare cases, if the main thread dies, the server process doesn't appear to
+shut down correctly.  Sometimes, it appears to use high CPU usage (is stuck in a loop
+somewhere).  It is likely that a socket disconnect is getting a read or write
+while loop stuck in a loop, and that additional error checking (or non-error
+occurance but no change to the amount of data read/written) might help the
+state of things.  Reproducing this one is pretty hard--I can't create the
+exact conditions yet to manually trigger it.  Note that this issue may have
+been squashed in forks 0.21, as most of the socket handling was rewritten in
+that release.
+
+
+***** Miscellaneous Items *****
+
+Move source filter from forks.pm to forks::shared.pm, although I doubt that
+there will be many cases where forks would only be used.
 
 Add additional tests to rigorously test tied handle (for shared var) behavior.
 Test delete with single, hash slice, and array slice elements.
 
-eval {} enclose tojoin() section at end of each thread, to (try to) prevent 
-warnings of "socket closed"; may need to rework which sections call _croak() 
-and which should eval{} catch, throw warning, and quietly exit.
+Add tests for $thr->join() error cases.
 
-Improve error handling of socket exceptions, as some errors are valid run-time
-conditions that forks should be intelligently trapping and handling.
-
-Add some shared handle tests.
-
-Finish reorganizing internals to support a plug-in module style (either via subclass
-or, more likely, function overloading) for better external module support to
-support alternative methods for handling shared variable data, locks, waiting,
-and signals.
+Cache signal names from Config.pm for higher performance (avoid tied access)?
