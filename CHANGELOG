@@ -1,3 +1,22 @@
+0.22	19 March 2007
+	***** Internal behavior changes *****
+
+	Thread manager process now forcefully kills any still active threads
+	when it exits.  This is intended to best simulate standard thread.pm
+	thread cleanup during process exit.
+
+	***** Bug fixes *****
+
+	Corrected bug in shared server shutdown preventing complete cleanup.
+	
+	Corrected some platform and perl build sensitivities in the test suite.
+
+	***** Miscellaneous changes *****
+
+	Added additional stability against fork() outside of forks.pm.
+	
+	Tweaked some warnings and disabled some debug logging.
+	
 0.21	17 March 2007
 	This revision includes *many* core changes and improvements, so be sure
 	to perform full testing with existing forks-enabled applications before

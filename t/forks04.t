@@ -16,8 +16,10 @@ BEGIN {
     $skip_all = 0;
     $num_tests = 97;
     eval {
-        use threads; # must be done _before_ Test::More which loads real threads.pm
-        use threads::shared;
+        require threads; # must be done _before_ Test::More which loads real threads.pm
+        require threads::shared;
+        import threads;
+        import threads::shared;
         unless ($forks::threads_override || $forks::threads_override) {
             $skip_all = 1;
             $num_tests = 1;

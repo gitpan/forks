@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.21';
+$VERSION = '0.22';
 
 package threads; # but in fact we're masquerading as threads.pm
 
@@ -87,6 +87,7 @@ BEGIN {
     my $h = tied %Config::Config;
     $h->{useithreads} = 1;
 }
+
 #---------------------------------------------------------------------------
 
 # Global debug flag
@@ -377,7 +378,7 @@ BEGIN {
         $cmd_num_to_type[$i] = $cmd_filtered[$i];
         $cmd_type_to_num{$cmd_filtered[$i]} = $i;
     }
-}
+} #BEGIN
 
 # Make sure that equality works on thread objects
 
@@ -390,6 +391,26 @@ use overload
 # Create new() -> create() equivalence
 
 *create = \&new; create() if 0; # to avoid warning
+
+# Overload global fork for best protection against external fork.
+
+BEGIN {
+    no warnings 'redefine';
+    *CORE::GLOBAL::fork = sub {
+    
+# Perform the fork
+# Clear critical state variables in child process
+# Return the forked pid
+
+        my $pid = CORE::fork();
+        if (defined $pid && $pid == 0) { #in child
+            delete $ISATHREAD{$$};
+            undef( $TID );
+            undef( $PID );
+        }
+        return $pid;
+    };
+} #BEGIN
 
 # Satisfy -require-
 
@@ -855,6 +876,7 @@ _log( " ! global startup" ) if DEBUG;
 # Enable custom CHLD signal handler, if necessary
 # If we appear to be in the child
 #  Die if the fork really failed
+#  Store PID of shared in $SHARED for server exit later
 #  Start handling requests as the server
 # Mark PID for reaping, if using custom CHLD signal handler
 # Make this thread 0
@@ -878,6 +900,7 @@ _log( " ! global startup" ) if DEBUG;
     }
     unless ($SHARED = fork) {
         _croak( "Could not start initial fork" ) unless defined( $SHARED );
+        $SHARED = $$;
         return &_server;
     }
     reapPid($SHARED) if $CUSTOM_SIGCHLD;
@@ -898,10 +921,11 @@ END {
 
 # Localize $? to prevent accidental override during shutdown
 # Revert to simple CHLD handler to insure portable, reliable shutdown
-# If this process is the shared server)
+# If this process is the shared server
+#  Calculate and report stats on running and/or unjoined threads (excluding main thread)
+
 #  Shutdown the socket server
 #  Delete UNIX socket file if the socket file exists
-#  Calculate and report stats on running and/or unjoined threads (excluding main thread)
 #  Return now
 # If this process is a thread (and wasn't a forked process from a thread)
 #  Mark this thread as shutting down (in case exited via exit() or a signal)
@@ -910,29 +934,45 @@ END {
 
     local $?;
     $SIG{CHLD} = 'IGNORE';
-    if ($$ == $SHARED) {
-        $QUERY->shutdown(2) if defined $QUERY;
-        unlink($PORT) if $THREADS_UNIX && -S $PORT;
-
+    if (!exists( $ISATHREAD{$$} ) && $$ == $SHARED) {
         my $running_and_unjoined = 0;
         my $finished_and_unjoined = 0;
         my $running_and_detached = 0;
         foreach my $tid (grep(!/^0$/, keys %TID2PID)) {
             if (!exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid}) {
-                $running_and_unjoined++ if !exists $RESULT{$tid} && !exists $JOINED{$tid};
+                $running_and_unjoined++
+                    if !exists $RESULT{$tid} && !exists $JOINED{$tid};
                 $finished_and_unjoined++ if exists $RESULT{$tid};
             }
         }
         foreach my $tid (grep(!/^0$/, keys %DETACHED)) {
-            $running_and_detached++ if exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid};
+            $running_and_detached++
+                if exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid};
         }
 
         print STDERR "Perl exited with active threads:\n"
             ."\t$running_and_unjoined running and unjoined\n"
             ."\t$finished_and_unjoined finished and unjoined\n"
             ."\t$running_and_detached running and detached\n"
-            if warnings::enabled() && ($running_and_unjoined 
+            if ($running_and_unjoined 
                 || $finished_and_unjoined || $running_and_detached);
+
+        my @pidtokill;
+        while (my ($tid, $client) = each %TID2CLIENT) {
+            eval {
+                my $written = send( $client,'',0 );
+                if (defined( $written )) {
+                    push @pidtokill, $TID2PID{$tid}
+                        if $tid && defined $TID2PID{$tid}
+                            && CORE::kill(0, $TID2PID{$tid});
+                };
+            };
+        }
+        CORE::kill('SIGKILL', $_) foreach @pidtokill;
+
+        $QUERY->shutdown(2) if defined $QUERY;
+        unlink($PORT) if $THREADS_UNIX && -S $PORT;
+
         return;
     }
     if (exists( $ISATHREAD{$$} ) && $$ == $PID) {
@@ -1242,8 +1282,8 @@ sub _cleanup_unsafe_thread_exit {
 
     my $tid = shift;
     my $errtxt = shift || '';
-    Carp::cluck( "Performing cleanup for dead thread $tid: $errtxt" );
-#        if warnings::enabled() && $errtxt ne '';   #TODO: re-enable this case?
+    Carp::cluck( "Performing cleanup for dead thread $tid: $errtxt" )
+        if warnings::enabled() && $errtxt ne '';   #TODO: disable these conditions?
 
 # If thread isn't already joined and shutdown
 #  Mark this thread as shutdown
@@ -1487,12 +1527,14 @@ sub _init_thread {
 # Get flag whether this thread should start detached or not
 # Mark this process as a thread
 # Reset thread local tid value (so the process doesn't have its parent's tid)
+# Reset thread local pid value (so the process doesn't have its parent's pid)
 # Store the return context of this thread
 
     my $thread_context = shift;
     my $is_detached = shift;
     $ISATHREAD{$$} = undef;
     undef( $TID );
+    undef( $PID );
     $THREAD_CONTEXT = $thread_context;
 
 # Attempt to create a connection to the server or die
@@ -1673,7 +1715,7 @@ sub _length {
         if (exists( $ISATHREAD{$$} )) {
             $SHUTTING_DOWN = 1;
 _log( "Thread $TID terminated abnormally: $errtxt" ) if DEBUG;
-warn "***_length: Thread $TID terminated abnormally: $errtxt";  #TODO: for debugging only
+#warn "***_length: Thread $TID terminated abnormally: $errtxt";  #TODO: for debugging only
             CORE::exit();
         } else {
             _cleanup_unsafe_thread_exit($CLIENT2TID{$client}, $errtxt);
@@ -1748,7 +1790,7 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
                 warn "Thread $TID terminated abnormally: $errtxt"
                     if warnings::enabled() && $TID && !$SHUTTING_DOWN;
                 $SHUTTING_DOWN = 1;
-warn "===Thread $TID terminated abnormally: $errtxt";   #TODO: for debugging only
+#warn "===Thread $TID terminated abnormally: $errtxt";   #TODO: for debugging only
                 CORE::exit();
             }
             _croak( $errtxt ) unless ($SHUTTING_DOWN && !DEBUG);
@@ -2798,7 +2840,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.21.
+This documentation describes version 0.22.
 
 =head1 SYNOPSIS
 
