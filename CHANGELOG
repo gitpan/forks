@@ -1,3 +1,16 @@
+0.23	8 April 2007
+	***** Test suite fixes *****
+	
+	Corrected issue in forks04.t that would cause irrelevant but terminal
+	compilation errors if real threads.pm (1.34 or later) weren't present.
+	
+	***** Miscellaneous changes *****
+	
+	Silenced a warning during external fork (non-thread) process exit. 
+	
+	Added some internal hooks to allow add-on modules (e.g. forks::BerkeleyDB)
+	the opportunity to clean up global thread resources during shutdown.
+	
 0.22	19 March 2007
 	***** Internal behavior changes *****
 

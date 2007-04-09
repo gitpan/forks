@@ -23,11 +23,25 @@ BEGIN {
         unless ($forks::threads_override || $forks::threads_override) {
             $skip_all = 1;
             $num_tests = 1;
+			# do the following to prevent unnecessary test script errors
+			if (!defined $threads::VERSION || $threads::VERSION < 1.34) {
+				require forks;
+				require forks::shared;
+				import forks;
+				import forks::shared;
+			}
         }
     };
     if ($@) {
         $skip_all = 1;
         $num_tests = 1;
+        # do the following to prevent unnecessary test script errors
+        if (!defined $threads::VERSION || $threads::VERSION < 1.34) {
+			require forks;
+			require forks::shared;
+			import forks;
+			import forks::shared;
+		}
     }
 }
 

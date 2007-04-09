@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.22';
+$VERSION = '0.23';
 
 package threads; # but in fact we're masquerading as threads.pm
 
@@ -898,6 +898,7 @@ _log( " ! global startup" ) if DEBUG;
             $CUSTOM_SIGCHLD = 0;
         }
     }
+    _server_pre_startup();
     unless ($SHARED = fork) {
         _croak( "Could not start initial fork" ) unless defined( $SHARED );
         $SHARED = $$;
@@ -915,6 +916,13 @@ BEGIN {
     *forks::import = *forks::import = \&import;
 }
 
+# Functions to allow external modules an API hook to specific runtime states
+
+sub _server_pre_startup {}
+sub _server_post_startup {}
+sub _end_server_pre_shutdown {}
+sub _end_server_post_shutdown {}
+
 #---------------------------------------------------------------------------
 
 END {
@@ -923,9 +931,10 @@ END {
 # Revert to simple CHLD handler to insure portable, reliable shutdown
 # If this process is the shared server
 #  Calculate and report stats on running and/or unjoined threads (excluding main thread)
-
+#  Forcefully terminate any lingering thread processes (except main thread)
 #  Shutdown the socket server
 #  Delete UNIX socket file if the socket file exists
+#  Allow external modules opportunity to clean up thread process group resources
 #  Return now
 # If this process is a thread (and wasn't a forked process from a thread)
 #  Mark this thread as shutting down (in case exited via exit() or a signal)
@@ -934,7 +943,7 @@ END {
 
     local $?;
     $SIG{CHLD} = 'IGNORE';
-    if (!exists( $ISATHREAD{$$} ) && $$ == $SHARED) {
+    if (!exists( $ISATHREAD{$$} ) && defined($SHARED) && $$ == $SHARED) {
         my $running_and_unjoined = 0;
         my $finished_and_unjoined = 0;
         my $running_and_detached = 0;
@@ -972,6 +981,8 @@ END {
 
         $QUERY->shutdown(2) if defined $QUERY;
         unlink($PORT) if $THREADS_UNIX && -S $PORT;
+        
+        _end_server_post_shutdown();
 
         return;
     }
@@ -1019,6 +1030,7 @@ sub _server {
 #  Handle any timedwaiting events that may have expired
 
     my $polls = 0;
+    _server_post_startup();
     while ($RUNNING || exists $WRITE{$TID2CLIENT{0}}) {
 if (DEBUG) {
  my $clients = keys %WRITE;
@@ -1265,9 +1277,11 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
         }
     }
 
+# Allow external modules opportunity to clean up thread process group resources
 # Exit now, we're in the shared process and we've been told to exit
 
 _log( " ! global exit: did $polls polls" ) if DEBUG;
+    _end_server_pre_shutdown();
     CORE::exit();
 } #_server
 
@@ -1278,7 +1292,7 @@ _log( " ! global exit: did $polls polls" ) if DEBUG;
 sub _cleanup_unsafe_thread_exit {
 
 # Get tid of thread to cleanup
-# Get 
+# Get error text to display in stack trace
 
     my $tid = shift;
     my $errtxt = shift || '';
@@ -2840,7 +2854,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.22.
+This documentation describes version 0.23.
 
 =head1 SYNOPSIS
 
@@ -3211,6 +3225,13 @@ See the TODO file in the distribution.
 These problems are known and will hopefully be fixed in the future:
 
 =over 2
+
+=item inter-thread signaling is experimental and potentially unstable
+
+This feature is considered experimental and has rare synchronization issues
+when sending a signal to a process in the middle of sending or receiving
+socket data pertaining to a threads operation.  This will be addressed in a
+future release.
 
 =item test-suite exits in a weird way
 

@@ -42,6 +42,6 @@ sleep 3;
 ok(!$thr->is_running(), 'Check that thread is no longer running');
 ok($gotsig, 'Check that custom signal handler was used');
 
-$_->join() foreach threads->list();
+#$_->join() foreach threads->list();	#TODO: disabled until signals considered safer
 
 1;

@@ -16,10 +16,11 @@ use forks::shared;
 
 diag( <<EOD );
 
-Please note that there are some problems with testing the forks.pm module.
+Please note that there are some problems with Test::More and the forks.pm
+module, due to a limitation in Test::More when using threads API with forks.
 Some texts with 'WHOA!' may appear on the screen, and the final result of
 the test may be inconclusive.  If all separate tests have been successful,
-then it should be safe to install the forks.pm modules.
+then it should be completely safe to install the forks.pm modules.
 
 EOD
 

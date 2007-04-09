@@ -14,36 +14,36 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 d3c6aafaf95b124c51bc0f408dd66dce62b102ca CHANGELOG
+SHA1 28609f98e8060fdc99269f041d74b6508035ff58 CHANGELOG
 SHA1 e503806c786cb67a35582b2d0844e11b54dd23b0 CREDITS
 SHA1 04322a56083720866a90703043a5864cbf1c3d9e MANIFEST
 SHA1 dfcafc1660c6ba23892c94541eb091b4c94f33cc MANIFEST.skip
-SHA1 2f06435cd2083deefa287444c7212ce6e64a5b00 META.yml
+SHA1 c24cabf82d0d1f7d21894f56743020bc8eaff80e META.yml
 SHA1 aa09e7e5908f1727c9d1610e775103277fcf1cf7 Makefile.PL
-SHA1 bb425d2de502031ab6f2c5cf0775ca31f1664e63 README
+SHA1 bc9174b0431daa12a2bfdcb00dccdaa6768af23f README
 SHA1 c1d00ae3ed4d1c8e317d17df4b1b8cc5bf11a796 TODO
 SHA1 9d5077e69f56deceaaf157246767e69ad8f0efce VERSION
 SHA1 c36ffaa70a1374f61a6df5dd8b63312c39b76636 forks.xs
-SHA1 f9bfd3cdf720d89e6636e2ec25a97cdd399ab1ab lib/forks.pm
-SHA1 fce0fef26d0c2cda541167f3d3b41c4337ba4a8d lib/forks/shared.pm
-SHA1 79f543a66d601b3df7c813d31234e0f1ff205c46 lib/threads/shared/array.pm
-SHA1 e255cdcecac72a2417fcd0a06181ce46cc422eed lib/threads/shared/handle.pm
-SHA1 e6ef18ece9a720181ed8030c30e0201a8801bc81 lib/threads/shared/hash.pm
-SHA1 ee98db0f4c06afaa37bdee2cb8d5fc6e0847a7d6 lib/threads/shared/scalar.pm
+SHA1 23221bd72d1978f4060b2fe21830258bcaa229d5 lib/forks.pm
+SHA1 fd13984f0735a4393f76f3b8da5ea2590ab5c642 lib/forks/shared.pm
+SHA1 24fff1c82556495e4dacadbcb6f2f11d8be59e9b lib/threads/shared/array.pm
+SHA1 408e79aa67e9f806ab85bbe123152273bb179005 lib/threads/shared/handle.pm
+SHA1 a37bddfeac9825d7d91ac0fb73d7bd6900dac4d2 lib/threads/shared/hash.pm
+SHA1 9e1e559b9c1fdc7f5a8cdc014aef94bcf3568477 lib/threads/shared/scalar.pm
 SHA1 3150811824d7da69c297db623fd5b232c7cca503 ppport.h
-SHA1 458793b26e03cb8618e5bad8af70400f0e3677a8 t/forks01.t
+SHA1 c11ac7782b557d8bc4f06686406ec13e176607bd t/forks01.t
 SHA1 7e0666e6dac891b633e60370f4f0119af5b050ac t/forks02.t
 SHA1 1d262fbba3d5b4d97938fcb112e45bdfb88ed87f t/forks03.t
-SHA1 ec4efecf514c8fbd99a85499bb2f8b8e7d4e937c t/forks04.t
+SHA1 8b6f1bee4518ac3beb88ab38270b80b243eaead5 t/forks04.t
 SHA1 655fa8e6f74a02407bb3b520456a70a8d4b3b0a3 t/forks05.t
 SHA1 efab24095f11289789c5714b9084b4f7bca04901 t/forks06.t
-SHA1 edb6780d9102629c228b45926e042f43ac0741f5 t/forks07.t
+SHA1 1bd96f0481678cf6205c08c848d6d8283c75798d t/forks07.t
 SHA1 fde43f1a4cb3d7682f25b92f01688af37f832930 t/forks20.t
 SHA1 fc5734f9c393dcc9f12c87df4bf9362e88a800ad t/forks99.t
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.5 (Cygwin)
 
-iD8DBQFF/imyQwn7DcpJEO4RAvnfAKCEOv5jjKrQVRamVYonIkfY8NRS9wCfWjuc
-MHZfq81ZPk8d8E7j1+3CrpE=
-=HjrR
+iD8DBQFGGbepQwn7DcpJEO4RAksrAKCDiiq4iUqj5GIy6BBOD5TGoctUHACfZVBk
+VqOSPXgTshnS+XtBSbD6BLM=
+=49Vh
 -----END PGP SIGNATURE-----
