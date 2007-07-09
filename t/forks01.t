@@ -24,7 +24,7 @@ then it should be completely safe to install the forks.pm modules.
 
 EOD
 
-use Test::More tests => 138;
+use Test::More tests => 147;
 use strict;
 use warnings;
 
@@ -70,9 +70,11 @@ is( system("echo"),0, 'check that CORE::system still returns correct exit values
 
 unless (my $pid = fork) {
   threads->isthread if defined($pid);
-  exit;
+  threads->exit;
 }
 sleep 3; # make sure fork above has started to ensure tid's are in sync
+
+my $test_lock : shared;
 
 my $t1 = threads->new( sub { threads->tid } );
 ok( $t1,'check whether we can start a thread with new()' );
@@ -97,6 +99,43 @@ ok($t1 != threads->object(3),'check that != works on threads objects');
 is( $t3->join,'4','check return value thread 3' );
 is( $t2->join,'3','check return value thread 2' );
 is( $t1->join,'2','check return value thread 1' );
+
+#== error ==========================================================
+{
+	no warnings 'threads';
+	$t1 = threads->new( sub { die 'Thread called die.' } );
+	$t2 = threads->new( sub { die bless({status => 'die'}, 'somepkg') } );
+}
+
+$t1->join();
+is ( $t1->error,"Thread called die. at t/forks01.t line 106.\n",'check that thread returned expected error' );
+
+$t2->join();
+my $err = $t2->error;
+is ( ref($err),'somepkg','check that thread returned expected error object' );
+is ( eval{$err->{status}},'die','check that thread error object is valid' );
+
+#== exit ===========================================================
+$t1 = threads->new( sub { threads->exit() } );
+$t1->join();
+ok(1, 'check that only one thread exited');
+
+$t1 = threads->new( {'exit' => 'thread_only'}, sub { exit() } );
+$t1->join();
+ok(1, 'check that only one thread exited');
+
+$t1 = threads->new( sub { threads->set_thread_exit_only(1); exit() } );
+$t1->join();
+ok(1, 'check that only one thread exited');
+
+$t1 = threads->new( sub { sleep 2; exit() } );
+$t1->set_thread_exit_only(1);
+$t1->join();
+ok(1, 'check that only one thread exited');
+
+$t1 = threads->new( sub { import threads 'exit' => 'threads_only'; exit(); } );
+$t1->join();
+ok(1, 'check that only one thread exited');
 
 #== SCALAR =========================================================
 
@@ -178,6 +217,11 @@ cmp_ok( scalar(@array),'==',11,     'check number of elements' );
 cmp_ok( scalar(@array),'==',0,      'check number of elements' );
 is( join('',@array),'',         'check array fetch' );
 
+@array = ();
+my $shared_scalar : shared = 'test';
+push @array, $shared_scalar;
+is($array[0], 'test',           'push with a shared variable works');
+
 #== HASH ===========================================================
 
 my %hash = (a => 'A');
@@ -251,7 +295,7 @@ ok( $thread->join,"Check if came back correctly from thread" );
     } );
     $zoo = $data;
 }
-ok( $thread->join,"Check if it was the same inside the thread\n" );
+ok( $thread->join,"Check if it was the same inside the thread" );
 
 #$thread = threads->new( sub { sleep 2; cond_signal $zoo} );
 #lock $zoo;
@@ -356,10 +400,12 @@ $thread3 = threads->new( sub { lock $lockvar; cond_wait $zoo, $lockvar; 1} );
 }
 
 #== threads->list, is_running, is_joinable, isdetached =============
-
 $thread1 = threads->new( sub { lock $lockvar; cond_wait $lockvar; 1});
 $thread2 = threads->new( sub {
-	ok( !threads->is_detached(),"Check that thread->is_detached returns false");
+	{
+		lock $test_lock;
+		ok( !threads->is_detached(),"Check that thread->is_detached returns false");
+	}
 	lock $zoo;
 	cond_wait $zoo;
 	1
@@ -367,7 +413,10 @@ $thread2 = threads->new( sub {
 $thread3 = threads->new( sub {
 	lock $lockvar;
 	cond_wait $lockvar;
-	ok( threads->is_detached(),"Check that thread->is_detached returns true");
+	{
+		lock $test_lock;
+		ok( threads->is_detached(),"Check that thread->is_detached returns true");
+	}
 	1
 });
 $thread3->detach;
@@ -377,16 +426,19 @@ $thread3->detach;
     lock $zoo;
     my $num;
     
-    ok( $thread1->is_running(),"Check that thread is_running returns true" );
-    ok( !$thread1->is_joinable(),"Check that thread is_joinable returns false" );    
-    ok( !$thread1->is_detached(),"Check that thread is_detached returns false" );    
-    ok( $thread3->is_running(),"Check that thread is_running returns true" );
-    ok( !$thread3->is_joinable(),"Check that thread is_joinable returns false" );    
-    ok( $thread3->is_detached(),"Check that thread is_detached returns true" );    
+    {
+		lock $test_lock;
+		ok( $thread1->is_running(),"Check that thread is_running returns true" );
+		ok( !$thread1->is_joinable(),"Check that thread is_joinable returns false" );    
+		ok( !$thread1->is_detached(),"Check that thread is_detached returns false" );    
+		ok( $thread3->is_running(),"Check that thread is_running returns true" );
+		ok( !$thread3->is_joinable(),"Check that thread is_joinable returns false" );    
+		ok( $thread3->is_detached(),"Check that thread is_detached returns true" );    
 
-    cmp_ok( $num=threads->list(threads::all), '==', 2,"Check for non-joined, non-detached threads" );
-    cmp_ok( $num=threads->list(threads::running), '==', 2,"Check for non-detached threads that are still running" );
-    cmp_ok( $num=threads->list(threads::joinable), '==', 0,"Check for non-joined, non-detached threads that have finished running" );
+		cmp_ok( $num=threads->list(threads::all), '==', 2,"Check for non-joined, non-detached threads" );
+		cmp_ok( $num=threads->list(threads::running), '==', 2,"Check for non-detached threads that are still running" );
+		cmp_ok( $num=threads->list(threads::joinable), '==', 0,"Check for non-joined, non-detached threads that have finished running" );
+	}
     
     cond_broadcast $lockvar;
     cond_signal $zoo;
@@ -395,19 +447,25 @@ $thread3->detach;
     sleep 3;
     my $num;
 
-    cmp_ok( $num=threads->list(threads::all), '==', 2,"Check for non-joined, non-detached threads" );
-    cmp_ok( $num=threads->list(threads::running), '==', 0,"Check for non-detached threads that are still running" );
-    cmp_ok( $num=threads->list(threads::joinable), '==', 2,"Check for non-joined, non-detached threads that have finished running" );
+	{
+		lock $test_lock;
+		cmp_ok( $num=threads->list(threads::all), '==', 2,"Check for non-joined, non-detached threads" );
+		cmp_ok( $num=threads->list(threads::running), '==', 0,"Check for non-detached threads that are still running" );
+		cmp_ok( $num=threads->list(threads::joinable), '==', 2,"Check for non-joined, non-detached threads that have finished running" );
 
-    ok( $thread1->is_joinable(),"Check that thread is_joinable returns true" );    
+		ok( $thread1->is_joinable(),"Check that thread is_joinable returns true" );
+	}
 
     $thread1->join();
 
-    ok( !$thread1->is_running(),"Check that thread is_running returns false" );
-    ok( !$thread1->is_joinable(),"Check that thread is_joinable returns false" );    
+	{
+		lock $test_lock;
+		ok( !$thread1->is_running(),"Check that thread is_running returns false" );
+		ok( !$thread1->is_joinable(),"Check that thread is_joinable returns false" );    
 
-    cmp_ok( $num=threads->list(threads::all), '==', 1,"Check for non-joined, non-detached threads" );
-    cmp_ok( $num=threads->list(threads::joinable), '==', 1,"Check for non-joined, non-detached threads that have finished running" );
+		cmp_ok( $num=threads->list(threads::all), '==', 1,"Check for non-joined, non-detached threads" );
+		cmp_ok( $num=threads->list(threads::joinable), '==', 1,"Check for non-joined, non-detached threads that have finished running" );
+	}
 
     $thread2->join();
 }
@@ -437,50 +495,100 @@ SKIP: {
 	@list = ();
 	
 	($thread1) = threads->create( sub {
-		ok( threads->wantarray(),"Check thread implicit context is list" );
+		{
+			lock $test_lock;
+			ok( threads->wantarray(),"Check thread implicit context is list" );
+		}
 		return qw(a b c);
 	} );
+	sleep 2;	#Test::More race-condition protection
+	{
+		lock $test_lock;
+		ok( $thread1->wantarray(), "Check thread implicit context is list" );
+	}
 	@list = $thread1->join();
-	ok( $thread1->wantarray(), "Check thread implicit context is list" );
 	is( join('',@list), 'abc', 'check list return result' );
 	
 	$thread1 = threads->create( sub {
-		cmp_ok( threads->wantarray(), '==', 0, "Check thread implicit context is scalar" );
+		{
+			lock $test_lock;
+			cmp_ok( threads->wantarray(), '==', 0, "Check thread implicit context is scalar" );
+		}
 		return 'abc';
 	} );
+	sleep 2;	#Test::More race-condition protection
+	{
+		lock $test_lock;
+		cmp_ok( $thread1->wantarray(), 'eq', '', "Check thread implicit context is scalar" );
+	}
 	$scalar = $thread1->join();
-	cmp_ok( $thread1->wantarray(), '==', 0, "Check thread implicit context is scalar" );
-	is( $scalar, 'abc', 'check scalar return result' );
+	{
+		lock $test_lock;
+		is( $scalar, 'abc', 'check scalar return result' );
+	}
 	
 	threads->create( sub {
-		ok( !defined threads->wantarray(), "Check thread implicit context is void" );
+		{
+			lock $test_lock;
+			ok( !defined threads->wantarray(), "Check thread implicit context is void" );
+		}
 		return;
 	} );
 	$_->join() foreach threads->list();
 
 	$thread1 = threads->create( { 'context' => 'list' }, sub {
-		ok( threads->wantarray(),"Check thread context is list" );
+		{
+			lock $test_lock;
+			ok( threads->wantarray(),"Check thread context is list" );
+		}
 		return 'def';
 	} );
+	sleep 2;	#Test::More race-condition protection
+	{
+		lock $test_lock;
+		ok( $thread1->wantarray(), "Check thread context is list" );
+	}
 	@list = $thread1->join();
-	ok( $thread1->wantarray(), "Check thread context is list" );
-	is( join('',@list), 'def', 'check array return result' );
+	{
+		lock $test_lock;
+		is( join('',@list), 'def', 'check array return result' );
+	}
 	
 	$thread1 = threads->create( { 'context' => 'scalar' }, sub {
-		cmp_ok( threads->wantarray(), '==', 0, "Check thread context is scalar" );
+		{
+			lock $test_lock;
+			cmp_ok( threads->wantarray(), '==', 0, "Check thread context is scalar" );
+		}
 		return qw(a b c); 
 	} );
+	sleep 2;	#Test::More race-condition protection
+	{
+		lock $test_lock;
+		cmp_ok( $thread1->wantarray(), 'eq', '', "Check thread context is scalar" );
+	}
 	$scalar = $thread1->join();
-	cmp_ok( $thread1->wantarray(), '==', 0, "Check thread context is scalar" );
-	is( $scalar, 'c', 'check scalar return result' );
+	{
+		lock $test_lock;
+		is( $scalar, 'c', 'check scalar return result' );
+	}
 	
 	$thread1 = threads->create( { 'context' => 'void' }, sub {
-		ok( !defined threads->wantarray(), "Check thread context is void" );
+		{
+			lock $test_lock;
+			ok( !defined threads->wantarray(), "Check thread context is void" );
+		}
 		return 'abc'; 
 	} );
+	sleep 2;	#Test::More race-condition protection
+	{
+		lock $test_lock;
+		ok( !defined $thread1->wantarray(),"Check thread context is void" );
+	}
 	$scalar = $thread1->join();
-	ok( !defined $thread1->wantarray(),"Check thread context is void" );
-	ok( !defined $scalar, 'check void return result' );
+	{
+		lock $test_lock;
+		ok( !defined $scalar, 'check void return result' );
+	}
 }
 
 #== stringify ======================================================

@@ -77,11 +77,14 @@ ok(!$thr1->is_running(), "Check if thread $thr1 completed (killed or joined)");
 ok(!$thr2->is_running(), "Check if thread $thr2 completed (killed or joined)");
 
 #== auto-detect and resolve with TERM signal =======================
+SKIP: {
+skip 'No longer supported', 2;
 forks::shared->set_deadlock_option(resolve_signal => SIGTERM);
 ($thr1, $thr2) = deadlock_thread_pair();
 $_->join() foreach threads->list();
 ok(!$thr1->is_running(), "Check if thread $thr1 completed (killed or joined)");
 ok(!$thr2->is_running(), "Check if thread $thr2 completed (killed or joined)");
+}
 
 #== timed auto-detect and resolve ==================================
 my $min_time = 10;

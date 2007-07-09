@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.23';
+$VERSION = '0.24';
 
 use Config ();
 
@@ -15,7 +15,6 @@ sub set_deadlock_option {
 # Set value for 'detect' option
 # Set value for 'period' option
 # Set value for 'resolve' option
-# Set value for 'resolve_signal' option
 # Send settings to server
 
     my $class = shift;
@@ -24,27 +23,18 @@ sub set_deadlock_option {
     $detect = $opts{detect} ? 1 : 0;
     $period = $opts{period} + 0 if defined $opts{period};
     $resolve = $opts{resolve} ? 1 : 0;
-    if (defined $opts{resolve_signal}) {
-        Carp::croak('Cannot signal threads without safe signals')
-            if threads::shared::_check_pl_signal_unsafe_flag();
-        Carp::croak("Unrecognized signal name or number: $opts{resolve_signal}")
-            unless grep(/^$opts{resolve_signal}$/,
-                map('SIG'.$_, split(/\s+/, $Config::Config{sig_name})),
-                split(/\s+/, $Config::Config{sig_name}),
-                split(/\s+/, $Config::Config{sig_num}));
-        $signal = $opts{resolve_signal};
-    }
     threads::shared::_command( '_set_deadlock_option',
         $detect,$period,$resolve,$signal );
 }
 
-package threads::shared;  # but we're masquerading as threads::shared.pm
+package
+    threads::shared;  # but we're masquerading as threads::shared.pm
 
 # Make sure we have version info for this module
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '1.04';
+$VERSION  = '1.12';
 $threads_shared = $threads_shared = 1;
 use strict;
 use warnings;
@@ -243,6 +233,26 @@ sub AUTOLOAD {
 #      2..N input parameters
 # OUT: 1..N output parameters
 
+sub PUSH {
+
+# Obtain the object
+# Obtain the subroutine name
+# Handle the command with the appropriate data and obtain the result (using
+#  evaluated array slice to insure shared scalar push value works, as push
+#  doesn't evaluate values before pushing them on the stack)
+# Return whatever seems appropriate
+
+    my $self = shift;
+    my $sub = $self->{'module'}.'::PUSH';
+    my @result = _command( '_tied',$self->{'ordinal'},$sub,map($_, @_) );
+    wantarray ? @result : $result[0];
+} #SPLICE
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2..N input parameters
+# OUT: 1..N output parameters
+
 sub SPLICE {
 
 # Die now if running in thread override mode
@@ -416,12 +426,22 @@ sub _id (\[$@%]) {
 
 sub _unlock {
 
-# Delete all of the ordinal numbers from the local list
+# For each ordinal number
+#  Decrement the lock counter
+#  Delete ordinal number from the local list, if counter is zero (lock released)
 # Notify the remote process also
 
-    delete @LOCKED{@_};
-     _command( '_unlock',@_ );
+    foreach (@_) {
+        $LOCKED{$_}--;
+        delete $LOCKED{$_} if $LOCKED{$_} <= 0;
+    }
+    _command( '_unlock',@_ );
 } #unlock
+
+#---------------------------------------------------------------------------
+#  IN: 1 reference to the shared variable
+# OUT: 1 ordinal number of variable
+#      2 return value scalar of _command
 
 sub _bless {
 
@@ -503,7 +523,7 @@ sub _remote {
 
     if (my $ordinal = $object->{'ordinal'}) {
         if ($sub eq '_lock') {
-            $LOCKED{$ordinal} = undef;
+            $LOCKED{$ordinal}++;
             push @_, (caller())[2,1];
         } elsif (($sub eq '_wait' && scalar @_ > 0) || ($sub eq '_timedwait' && scalar @_ > 1)) {
             my $it2 = pop @_;
@@ -646,7 +666,6 @@ where C<OPTIONS> may be a combination of any of the following:
     detect         => 1 (enable) or 0 (disable)
     period         => number of seconds between asynchronous polls
     resolve        => 1 (enable) or 0 (disable)
-    resolve_signal => any supported POSIX signal
     
 The C<detect> option enables deadlock detection.  By itself, this option
 enabled synchronous deadlock detection, which efficiently checks for
@@ -668,25 +687,15 @@ than synchronous deadlock detection.
 The C<resolve> option enables auto-termination of one thread in each deadlocked
 thread pair that has been detected.  As with the C<detect> option, C<resolve>
 prints out the action it performs to STDERR, if warnings are enabled.
-B<NOTE>: By default, C<resolve> uses SIGKILL to break deadlocks, so this
-feature should not be used in environments where stability of the rest of your
-application may be adversely affected by process death in this manner.
-
-The C<resolve_signal> option allows modification of the signal used by
-C<resolve>.  This may be useful if you wish to override a signal in your
-threads to close sensitive resources or print out additional debugging
-information before exit.  Signals may be any trappable ones given by number,
-as defined by L<POSIX> ":signal_h" export, or the name of the signal, such as
-'TERM' and 'USR1', or 'SIGTERM' and 'SIGUSR1'.
+B<NOTE>: C<resolve> uses SIGKILL to break deadlocks, so this feature should not
+be used in environments where stability of the rest of your application may be
+adversely affected by process death in this manner.
 
 For example:
 
     use forks;
-    use POSIX ':signal_h';
     use forks::shared
-        deadlock => {detect=> 1, resolve => 1, resolve_signal => SIGTERM};
-    use Carp 'cluck'
-    $SIG{TERM} = sub{ cluck "Caught TERM signal"; CORE::exit(); };
+        deadlock => {detect=> 1, resolve => 1};
 
 =head3 Manual detection
 
@@ -738,18 +747,6 @@ with a threads environment and forked processes.  Hopefully, that module will
 be patched in the future, but for now, the warnings are harmless and may be
 safely ignored.
 
-=item shared variable in push() on shared array bombs
-
-For some reason, using a bare shared variable as a parameter in a push() on a
-shared array, bombs.  This can be fixed by adding B<.''> to the shared
-variable.
-
-  push( @shared,$shared );    # bombs
-  push( @shared,$shared.'' ); # works
-
-This could be a generic problem with tie() in Perl, judging from some very
-recent discussion on p5p.
-
 =back
 
 =head1 CREDITS
@@ -762,9 +759,9 @@ For some of the XS code used for forks::shared exported bless function.
 
 =back
 
-=head1 CURRENT MAINTAINER
+=head1 CURRENT AUTHOR AND MAINTAINER
 
-Eric Rybski <rybskej@yahoo.com>.
+Eric Rybski <rybskej@yahoo.com>.  Please send all module inquries to me.
 
 =head1 ORIGINAL AUTHOR
 
@@ -773,7 +770,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2007 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

@@ -2,6 +2,7 @@
 #include "perl.h"
 #include "XSUB.h"
 
+#define NEED_PL_signals
 #include "ppport.h"
 
 #define MY_CXT_KEY "threads::shared::_guts" XS_VERSION
@@ -13,20 +14,24 @@ typedef struct {
 START_MY_CXT
 
 void
-exec_leave(pTHX_ U32 both) {
+exec_leave(pTHX_ SV *both) {
     U16 process;
-    U16 ordinal;
+    U32 ordinal;
+    AV *av_ord_lock;
 
     dSP;
     ENTER;
     SAVETMPS;
 
-    process = both >> 16;
-    ordinal = both & 0xFFFF;
+    av_ord_lock = (AV*)SvRV(both);
+    process = (U16)SvUV((SV*)*av_fetch(av_ord_lock, 1, 0));
+    ordinal = (U32)SvUV((SV*)*av_fetch(av_ord_lock, 2, 0));
   /*  printf ("unlock: ordinal = %d, process = %d\n",ordinal,process); */
+    SvREFCNT_dec(av_ord_lock);
+    SvREFCNT_dec(both);
 
     PUSHMARK(SP);
-    XPUSHs(sv_2mortal(newSViv(ordinal)));
+    XPUSHs(sv_2mortal(newSVuv(ordinal)));
     PUTBACK;
 
     if (process == getpid()) {
@@ -63,25 +68,25 @@ _check_pl_signal_unsafe_flag()
 # OUT: 1 reference to that variable
 
 SV*
-share(SV *ref)
+share(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
 
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         PUTBACK;
 
         call_pv( "threads::shared::_share",G_DISCARD );
 
         FREETMPS;
         LEAVE;
-        RETVAL = newRV_inc(ref);
+        RETVAL = newRV_inc(myref);
     OUTPUT:
         RETVAL
 
@@ -90,13 +95,13 @@ share(SV *ref)
 # OUT: 1 reference to that variable
 
 SV*
-share_disabled(SV *ref)
+share_disabled(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
-        RETVAL = newRV_inc(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
+        RETVAL = newRV_inc(myref);
     OUTPUT:
         RETVAL
 
@@ -104,39 +109,44 @@ share_disabled(SV *ref)
 #  IN: 1 any variable (scalar,array,hash,glob)
 
 void
-lock(SV *ref)
+lock(SV *myref)
     PROTOTYPE: \[$@%]
     PPCODE:
         int count;
-        U16 ordinal;
         U16 process;
+        U32 ordinal;
+        AV *av_ord_lock;
 
         LEAVE;
 
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
 
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_lock",0)));
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         PUTBACK;
 
         process = getpid();
         count = call_pv( "threads::shared::_remote",G_SCALAR );
 
         SPAGAIN;
-        ordinal = POPi;
+        ordinal = POPl;
    /*     printf ("lock: ordinal = %d, process = %d\n",ordinal,process); */
         PUTBACK;
 
         FREETMPS;
         LEAVE;
+        
+        av_ord_lock = newAV();
+        av_store(av_ord_lock, 1, newSVuv(process));
+        av_store(av_ord_lock, 2, newSVuv(ordinal));
 
-        SAVEDESTRUCTOR_X(exec_leave,(process << 16) | ordinal);
+        SAVEDESTRUCTOR_X(exec_leave,newRV((SV*)av_ord_lock));
         ENTER;
 
 #----------------------------------------------------------------------
@@ -144,19 +154,19 @@ lock(SV *ref)
 #      2 any variable (scalar,array,hash,glob) -- lock variable
 
 void
-cond_wait(SV *ref, ...)
+cond_wait(SV *myref, ...)
     PROTOTYPE: \[$@%];\[$@%]
     PREINIT:
-        SV *ref2;
+        SV *myref2;
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
         if (items > 1)
         {
-            ref2 = SvRV(ST(1));
-            if(SvROK(ref2))
-                ref2 = SvRV(ref2);
+            myref2 = SvRV(ST(1));
+            if(SvROK(myref2))
+                myref2 = SvRV(myref2);
         }
         
         ENTER;
@@ -164,9 +174,9 @@ cond_wait(SV *ref, ...)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_wait",0)));
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         if (items > 1)
-            XPUSHs(sv_2mortal(newRV_inc(ref2)));
+            XPUSHs(sv_2mortal(newRV_inc(myref2)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -180,22 +190,22 @@ cond_wait(SV *ref, ...)
 #      3 any variable (scalar,array,hash,glob) -- lock variable
 
 bool
-cond_timedwait(SV *ref, double epochts, ...)
+cond_timedwait(SV *myref, double epochts, ...)
     PROTOTYPE: \[$@%]$;\[$@%]
     PREINIT:
-        SV *ref2;
+        SV *myref2;
         int count;
         bool retval;
-        U16 ordinal;
+        U32 ordinal;
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
         if (items > 2)
         {
-            ref2 = SvRV(ST(2));
-            if(SvROK(ref2))
-                ref2 = SvRV(ref2);
+            myref2 = SvRV(ST(2));
+            if(SvROK(myref2))
+                myref2 = SvRV(myref2);
         }
 
         ENTER;
@@ -203,10 +213,10 @@ cond_timedwait(SV *ref, double epochts, ...)
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_timedwait",0)));
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         XPUSHs(sv_2mortal(newSVnv(epochts)));
         if (items > 2)
-            XPUSHs(sv_2mortal(newRV_inc(ref2)));
+            XPUSHs(sv_2mortal(newRV_inc(myref2)));
         PUTBACK;
 
         count = call_pv( "threads::shared::_remote",G_ARRAY );
@@ -229,19 +239,19 @@ cond_timedwait(SV *ref, double epochts, ...)
 #  IN: 1 any variable (scalar,array,hash,glob)
 
 void
-cond_signal(SV *ref)
+cond_signal(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
 
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_signal",0)));
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -253,19 +263,19 @@ cond_signal(SV *ref)
 #  IN: 1 any variable (scalar,array,hash,glob)
 
 void
-cond_broadcast(SV *ref)
+cond_broadcast(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
-        ref = SvRV(ref);
-        if(SvROK(ref))
-            ref = SvRV(ref);
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
 
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_broadcast",0)));
-        XPUSHs(sv_2mortal(newRV_inc(ref)));
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -278,14 +288,14 @@ cond_broadcast(SV *ref)
 #  IN: 1 optional scalar
 
 void
-bless(SV *ref, ...)
+bless(SV *myref, ...)
     PROTOTYPE: $;$
     PREINIT:
         HV* stash;
         SV* classname;
         STRLEN len;
         char *ptr;
-        SV* myref;
+        SV* myref2;
     CODE:
         if (items == 1) {
             stash = CopSTASH(PL_curcop);
@@ -306,20 +316,20 @@ bless(SV *ref, ...)
             }
             stash = gv_stashpvn(ptr, len, TRUE);
         }
-        SvREFCNT_inc(ref);
-        (void)sv_bless(ref, stash);
-        ST(0) = sv_2mortal(ref);
+        SvREFCNT_inc(myref);
+        (void)sv_bless(myref, stash);
+        ST(0) = sv_2mortal(myref);
         
-        myref = SvRV(ref);
-        if(SvROK(myref)) {
-            myref = SvRV(myref);
+        myref2 = SvRV(myref);
+        if(SvROK(myref2)) {
+            myref2 = SvRV(myref2);
         }
 
         ENTER;
         SAVETMPS;
 
         PUSHMARK(SP);
-        XPUSHs(sv_2mortal(newRV(myref)));
+        XPUSHs(sv_2mortal(newRV(myref2)));
         XPUSHs(sv_2mortal(newSVpv(HvNAME(stash), 0)));
         PUTBACK;
 

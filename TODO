@@ -1,30 +1,37 @@
 ***** Future Features / Interface Changes *****
 
-Add support for thread exit feature.
-
-Add support for $thr->error() after ->join() feature.
-
 optimizations:
 - implement more methods using custom filters (to reduce Storable usage)
 - support alternate, faster locking mechanisms (filesystem and/or SysV shmem)
 - allow for shared memory as transport medium (how will we fix blocking?)
 
-Add a method to give the user run-time privilage control over unix socket 
-file descriptors (for additional security control).
-
-join() needs to be able to propegate (die) errors to threads.  Currently, it
+join() needs to be able to propagate (die) errors to threads.  Currently, it
 only return undef in error cases.
 
 Make thread objects shared in nature, such that their properties may be read
 across all threads.  Will make _handle more reliable, and allow for thread
 state params to be persisted.
 
+Add support for CLONE_SKIP, if possible.  Or maybe just add support for a
+PRECLONE class method, which will be called in parent context.
+(http://perldoc.perl.org/perlmod.html#Making-your-module-threadsafe-threadsafe-thread-safe-module%2c-threadsafe-module%2c-thread-safe-CLONE-CLONE_SKIP-thread-threads-ithread)
+
+Add a method to give the user run-time privilege control over Unix socket 
+file descriptors (for additional security control).
+
 
 ***** Issues to Address *****
 
-push with a shared scalar bombs:
- push( @shared,$shared );    # bombs
- push( @shared,$shared.'' ); # works
+Memory is currently not reclaimed for shared variables that are no longer
+referenced by any thread.
+
+Determine if it is possible to recover all memory from detached threads.  Joined
+threads reclaim all shared memory (very stable memory usage); detached threads
+currently use a small amount of memory (~200Kb/100K threads) even after they
+complete.
+
+exit() in a thread may allow other threads that were waiting to join that thread
+to continue before they are terminated (race condition).  Join should not return.
 
 Add more defensive logic in _join() to prevent hang on join (for processes
 that have already terminated).  May wish to check client socket when join for
@@ -32,35 +39,21 @@ that thread is requested: if socket exception, then assume client terminated;
 otherwise, wait for client (regularly checking client socket connection to
 determine if it has prematurely closed).
 
-Need to look into why some signals very rarely are not caught by threads
-(i.e. SIGTERM should cause thread to exit--but thread appears to have ignored
-signal.  Is this a side effect of Perl's safe signal handling mechanism?).
-The thread does appear to actually get the signal, but sometimes it doesn't
-seem to completely exit.
-
-Need to make signal per tid into a bitmask of all signals to send a process
-when the server gets around to it (to insure no signals get lost if 2+
-threads send different signals to same thread in same period).
-
-Further stabilize thread signaling, as a signal might interrupt a thread send()
-to the server and then shutdown the thread, resulting in potentially
-concatenated message data that would trigger a decoding error on the server.
-Idea is to use a file system indicator whenever thread is signaled, thus
-allowing the thread to quickly check who signaled it (either another thread
-or an external process).  In the case of another thread and if a custom
-signal handler has been installed by the user, it should finish the current
-message it was working on, then continue.  If it were from the system, it
-should propegate the error to the main thread and continue.
-
 In rare cases, if the main thread dies, the server process doesn't appear to
 shut down correctly.  Sometimes, it appears to use high CPU usage (is stuck in a loop
 somewhere).  It is likely that a socket disconnect is getting a read or write
 while loop stuck in a loop, and that additional error checking (or non-error
-occurance but no change to the amount of data read/written) might help the
+occurrence but no change to the amount of data read/written) might help the
 state of things.  Reproducing this one is pretty hard--I can't create the
-exact conditions yet to manually trigger it.  Note that this issue may have
-been squashed in forks 0.21, as most of the socket handling was rewritten in
-that release.
+exact conditions yet to manually trigger it.  Problem last seen in forks 0.20.
+Note that this issue may have been squashed in forks 0.21, as most of the socket
+handling was rewritten in that release.
+
+Need to look into why some signals very rarely are not handled by threads
+(i.e. SIGTERM should cause thread to exit--but thread appears to have ignored
+signal.  Is this a side effect of Perl's safe signal handling mechanism?).
+The thread does appear to actually get the signal, but sometimes it doesn't
+seem to completely exit.  Problem last seen in forks 0.23.
 
 
 ***** Miscellaneous Items *****
@@ -74,3 +67,15 @@ Test delete with single, hash slice, and array slice elements.
 Add tests for $thr->join() error cases.
 
 Cache signal names from Config.pm for higher performance (avoid tied access)?
+
+Begin adding some sort of CLONE forks.pm compatibility framework to insure that
+modules that implement non-forks.pm CLONE methods are supported.  Currently,
+DBI is the only known module that may need a CLONE patch, and this is only to
+suppress annoying warning for resources that are closed (or is this something
+that actually needs to be fixed in DBI?)
+
+Signals sent to main thread tend to propagate to all threads.  We need to
+prevent this from happening, if possible, to replicate threads.pm behavior.
+
+Add recursive lock tests with cond_* (to test that recursive locks are
+correctly acquired and released).

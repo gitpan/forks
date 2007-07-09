@@ -1,7 +1,8 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.23';
+$VERSION = '0.24';
 
-package threads; # but in fact we're masquerading as threads.pm
+package
+    threads; # but in fact we're masquerading as threads.pm
 
 # Make sure we have version info for this module
 # Set flag to indicate that we're really the original threads implementation
@@ -9,19 +10,34 @@ package threads; # but in fact we're masquerading as threads.pm
 # Flag whether or not module is loaded in namespace override mode (e.g. threads.pm)
 # Be strict from now on
 
-$VERSION = '1.26';
+$VERSION = '1.63';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
 use strict;
 use warnings;
 
-# Load default signal handler for most signals
+#---------------------------------------------------------------------------
+# Set when to execute end block
+
+BEGIN {
+    if ($^C) {
+        eval "CHECK { _CHECK() }";
+    } else {
+        eval "END { _END() }";
+    }
+} #BEGIN
+
+# Load signal handler libraries
+
+BEGIN {
+    require sigtrap;
+    require forks::signals;
+}
+
 # Import additional scalar methods for refs and objects
 # Load library to set temp dir for forks data
 
-use sigtrap ('handler', \&_sigtrap_handler,
-    qw(untrapped normal-signals error-signals));
 use Scalar::Util qw(reftype blessed refaddr);
 use File::Spec;
 
@@ -36,6 +52,11 @@ use constant ENV_SIGNALS => ENV_ROOT.'/signals';
 use constant all      => ();
 use constant running  => 1;
 use constant joinable => 0;
+
+# Set constants for threads exit
+
+use constant EXIT_THREAD_ONLY => 'thread_only';
+use constant EXIT_THREADS_ONLY => 'threads_only';
 
 #---------------------------------------------------------------------------
 # If we're running in a perl before 5.8.0, we need a source filter to change
@@ -109,12 +130,21 @@ BEGIN {
 #   Make sure access is done with the THREADS_UNIX sub
 #  Else 
 #   Make THREADS_UNIX a false constant: default to INET sockets
+#  If there is a THREADS_IP_MASK specification
+#   Set its value
+#  Else
+#   Use default localhost mask
+#  If there is a THREADS_DAEMON_MODEL specification
+#   Enable integrated threads (server process child of main thread)
+#  Else
+#   Enable normal threads (server process parent of main thread)
 
 my $DEBUG;
 my $SERVER_NICE;
 my $FORCE_SIGCHLD_IGNORE;
 my $THREADS_UNIX;
 my $INET_IP_MASK;
+my $THREADS_INTEGRATED_MODEL;
 
 BEGIN {
     if (exists $ENV{'THREADS_DEBUG'}) {
@@ -153,6 +183,13 @@ BEGIN {
     } else {
         $INET_IP_MASK = '^127\.0\.0\.1$';
     }
+
+    if (exists $ENV{'THREADS_DAEMON_MODEL'}) {
+        $ENV{'THREADS_DAEMON_MODEL'} =~ m#^(.*)$#s;
+        $THREADS_INTEGRATED_MODEL = $1 ? 0 : 1;
+    } else {
+        $THREADS_INTEGRATED_MODEL = 1;
+    }
 } #BEGIN
 
 # Load the XS stuff
@@ -176,8 +213,7 @@ use POSIX      qw(WNOHANG
     BUFSIZ O_NONBLOCK F_GETFL F_SETFL
     SIG_BLOCK SIG_UNBLOCK SIGCHLD SIGKILL
     ECONNABORTED ECONNRESET EAGAIN EINTR EWOULDBLOCK);
-use Storable   qw(freeze thaw);
-use reaper     qw(reapPid);
+use Storable   ();
 use Time::HiRes qw(sleep time);
 use List::MoreUtils;
 
@@ -185,22 +221,35 @@ use List::MoreUtils;
 # Thread local query server object
 # The port on which the thread server is listening
 # The process id in which the shared variables are stored
+# The main thread process id
 # Initialize thread local hash (key: pid) whether this process is a thread
+# Initialize local flag whether main thread received ABRT signal
+# Initialize local flag whether main thread exited due to ABRT signal
+# Initialize hash (key: pid) of child thread PIDs
 # Thread local flag whether we're shutting down
+# Thread local flag whether we're shutting down in END block
 # Thread local flag whether we're shut down
 
 my $HANDLED_INIT = 0;
 my $QUERY;
 my $PORT;
 my $SHARED;
+my $PID_MAIN_THREAD;
 my %ISATHREAD;
-my $SHUTTING_DOWN;
-my $SHUTDOWN;
+my $MAIN_ABRT_HANDLED = 0;
+my $MAIN_EXIT_WITH_ABRT = 0;
+my %CHILD_PID;
+my $SHUTTING_DOWN = 0;
+my $SHUTTING_DOWN_END = 0;
+my $SHUTDOWN = 0;
 
 # Initialize the flag that indicates that we're still running
+# Initialize value that stores the desired application exit value
 # Initialize the number of bytes to read at a time
-# SigSet of signals that we will delay if target platform requires custom CHLD handler
 # Pseudo-signal mask indicating signals to handle when thread finished current server message handling
+# Initialize flag that indicates whether thread is send data with shared process
+# Initialize flag that indicates whether thread is recv data with shared process
+# Initialize variable for shared server received data
 # Boolean indicating whether or not platform requires a custom CHLD handler
 # Max sleep time of main server loop before looping once
 # Initialize hash (key: client) with info to be written to client threads
@@ -211,9 +260,12 @@ my $SHUTDOWN;
 # Initialize hash (key: module) with code references of CLONE subroutines
 
 my $RUNNING = 1;
+my $EXIT_VALUE;
 my $BUFSIZ  = BUFSIZ;
-my $DEFERRED_CHLD_SIGSET = POSIX::SigSet->new(SIGCHLD);
-my %DEFERRED_SIGNAL;
+my @DEFERRED_SIGNAL;
+$threads::SEND_IN_PROGRESS = 0;
+$threads::RECV_IN_PROGRESS = 0;
+$threads::RECV_DATA = '';
 my $CUSTOM_SIGCHLD = 0;
 my $MAX_POLL_SLEEP = 60;    #seconds
 my %WRITE;
@@ -239,15 +291,21 @@ my %PID2TID;
 my %PPID2CTID_QUEUE;
 my %TID2CONTEXT;
 
-# Initialize hash (key: tid) with tid's that have been detached
-# Initialize hash (key: tid) with detached threads are no longer running
+# Initialize flag with global thread exit method (1=thread; 0=check %THREAD_EXIT)
+# Initialize hash (key: tid) with threads that should threads->exit() on exit()
+# Initialize scalar with tid's (comma-separated) that have been detached
+# Initialize hash (key: tid) with detached threads are still running
 # Initialize hash (key: tid) with results from threads
-# Initialize hash (key: tid) with threads that have been joined
+# Initialize hash (key: tid) with terminal errors from threads
+# Initialize hash (key: tid) with threads that have not yet been joined
 
-my %DETACHED;
-my %DETACHED_DONE;
+my $THREADS_EXIT = 0;
+my %THREAD_EXIT;
+my $DETACHED = '';
+my %DETACHED_NOTDONE;
 my %RESULT;
-my %JOINED;
+my %ERROR;
+my %NOTJOINED;
 
 # Initialize hash (key: ppid) with clients blocking of ppid->ctid conversion
 # Initialize hash (key: tid) with clients blocking for join() result
@@ -308,11 +366,13 @@ my $DEADLOCK_RESOLVE = 0;
 my $DEADLOCK_RESOLVE_SIG = SIGKILL;
 
 # Create packed version of undef
+# Create packed version of zero-length string
 # Create packed version of false
 # Create packed version of true
 # Create packed version of empty list
 
 my $undef = _pack_response( [undef],  );
+my $defined = _pack_response( [''],  );
 my $false = _pack_response( [0], '__boolean' );
 my $true  = _pack_response( [1], '__boolean' );
 my $empty = _pack_response( [],  );
@@ -389,24 +449,52 @@ use overload
 ;
 
 # Create new() -> create() equivalence
+# Initialize thread server at runtime, in case import was skipped
 
 *create = \&new; create() if 0; # to avoid warning
+_init();
+
+# Functions to allow external modules an API hook to specific runtime states
+# These may be used to build a new CORE::GLOBAL::fork state
+# General rule is that forks.pm will never define anything but CORE::fork
+#  in _fork function, so this is the function to overload if you must
+#  completely handle the core fork event; otherwise, all other methods
+#  should be referenced and called like:
+#    my $_old_fork_post_child = \&threads::_fork_post_child;
+#    *threads::_fork_post_child = sub {
+#        $_old_fork_post_child->();
+#        ...
+#    }
+#  when building a new CORE::GLOBAL::fork state.
+#  See forks.pm CORE::GLOBAL::fork definition as an example.
+
+sub _fork_pre {}
+sub _fork { return CORE::fork; }
+sub _fork_post_parent {}
+sub _fork_post_child {
+    delete $ISATHREAD{$$};
+    undef( $TID );
+    undef( $PID );
+}
 
 # Overload global fork for best protection against external fork.
 
 BEGIN {
     no warnings 'redefine';
-    *CORE::GLOBAL::fork = sub {
+    *CORE::GLOBAL::fork = *CORE::GLOBAL::fork = sub {
     
 # Perform the fork
-# Clear critical state variables in child process
+# Handle post-fork in parent and child processes, if fork was successful
 # Return the forked pid
-
-        my $pid = CORE::fork();
-        if (defined $pid && $pid == 0) { #in child
-            delete $ISATHREAD{$$};
-            undef( $TID );
-            undef( $PID );
+        
+        _fork_pre(@_);
+        my $pid = _fork(@_);
+        if (defined $pid) {
+            if ($pid == 0) { #in child
+                _fork_post_child(@_);
+            } else {
+                _fork_post_parent(@_);
+            }
         }
         return $pid;
     };
@@ -436,15 +524,17 @@ sub new {
 #  Obtain the actual subroutine
 #  Parse stack_size -- not supported (yet)
 #  Parse thread context (presidence given to param over implicit context)
+#  Parse thread exit behavior
 # Else
 #  Store implicit thread context
     my $class = shift;
     my $sub = shift;
-    my ($param, $stack_size, $thread_context);
+    my ($param, $stack_size, $thread_context, $thread_exit);
     if (ref($sub) eq 'HASH') {
         $param = $sub;
         $sub = shift;
 #        if (exists $param->{'stack_size'}) {}
+
         if ((exists $param->{'context'} && $param->{'context'} eq 'list')
             || (exists $param->{'list'} && $param->{'list'}))
         {
@@ -459,6 +549,14 @@ sub new {
             $thread_context = undef;
         } else {
             $thread_context = CORE::wantarray;
+        }
+        
+        if (exists $param->{'exit'}) {
+            if ($param->{'exit'} eq EXIT_THREAD_ONLY) {
+                $thread_exit = EXIT_THREAD_ONLY;
+            } elsif ($param->{'exit'} eq EXIT_THREADS_ONLY) {
+                $thread_exit = EXIT_THREADS_ONLY;
+            }
         }
     } else {
         $thread_context = CORE::wantarray;
@@ -486,8 +584,8 @@ sub new {
             return undef;
         }
 
-#  Store the parent PID
 #  Set up the connection for handling queries
+#  Set appropriate thread exit behavior
 #  If thread context is defined
 #   If context is list
 #    Execute the routine that we're supposed to execute (list context)
@@ -501,7 +599,13 @@ sub new {
 #  And exit the process
 
         _init_thread($thread_context);
+        if (defined($thread_exit) && $thread_exit eq EXIT_THREAD_ONLY) {
+            threads->set_thread_exit_only(1);
+        } elsif (defined($thread_exit) && $thread_exit eq EXIT_THREADS_ONLY) {
+            _command( '_set_threads_exit_only',1 );
+        }
         my @result;
+        my $error;
         if (defined $thread_context) {
             if ($thread_context) {
                 eval { @result = $sub->( @_ ); };
@@ -512,17 +616,21 @@ sub new {
             eval { $sub->( @_ ); };
         }
 #warn "$TID: context = ".(defined $thread_context ? $thread_context ? 'array' : 'scalar' : 'void').",result (".scalar(@result).")=".CORE::join(',',@result); #TODO: for debugging only
-        warn "Thread $TID terminated abnormally: $@"
-            if $@ && $TID && warnings::enabled();
+        if ($@) {
+            $error = $@;
+            warn "Thread $TID terminated abnormally: $@"
+                if $TID && warnings::enabled();
+        }
         $SHUTTING_DOWN = 1;
-        _command( '_tojoin',@result );
+        _command( '_tojoin',$error,@result );
         CORE::exit();
     }
 
+# Mark PID for reaping, if using custom CHLD signal handler
 # Obtain the thread id from the thread just started
 # Create an object for it and return it
 
-    reapPid($pid) if $CUSTOM_SIGCHLD;
+    $CHILD_PID{$pid} = undef;
     my ($tid) = _command( '_waitppid2ctid',$$ );
     $class->_object( $tid,$pid );
 } #new
@@ -655,22 +763,41 @@ sub get_stack_size { return 0; } #get_stack_size
 sub set_stack_size { return 0; } #set_stack_size
 
 #---------------------------------------------------------------------------
+#  IN: 1 class
+#  IN: 2 exit status
+
+sub exit {
+    shift;
+    defined $_[0] ? CORE::exit($_[0]) : CORE::exit();
+} #exit
+
+#---------------------------------------------------------------------------
+
+# instance methods
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#  IN: 2 boolean value
+# OUT: 1..N error result (if any) of the indicated thread
+
+sub set_thread_exit_only {
+    _command( '_set_thread_exit_only',shift->tid,shift );
+} #set_thread_exit_only
+
+#---------------------------------------------------------------------------
 #  IN: 1 class or instantiated object
 # OUT: 1..N state of the indicated thread
+
+sub wantarray {
 
 # Obtain the class or object
 # If is an object, return thread context of specified thread
 # Otherwise, return thread context of current thread
 
-sub wantarray {
     my $self = shift;
     return _command( '_wantarray',$self->tid ) if ref($self);
     return $THREAD_CONTEXT;
 } #wantarray
-
-#---------------------------------------------------------------------------
-
-# instance methods
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -683,6 +810,12 @@ sub detach { _command( '_detach',shift->tid ) ? 1 : _croak('Thread already detac
 # OUT: 1..N results of the indicated thread
 
 sub join { _command( '_join',shift->tid ) } #join
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+# OUT: 1..N error result (if any) of the indicated thread
+
+sub error { _command( '_error',shift->tid ) } #error
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated threads object
@@ -776,74 +909,127 @@ sub async (&;@) {
 # standard Perl features
 
 #---------------------------------------------------------------------------
-# Default reaper, if using custom CHLD signal handler (prevents zombies)
+# Default reaper, if using custom CHLD signal handler (prevents thread zombies)
 
 sub REAPER {
-# While we have zombie processes, loop and reap (don't care about exit status)
 
-    while (my $pid = waitpid(-1, WNOHANG) > 0) {}
+# Localize system error and status variables
+# For just child thread processes, loop and reap
+#  If we are main thread, exit if shared process exited and main thread running
+
+    local $!; local $?;
+    foreach my $pid (keys %CHILD_PID) {
+        my $waitpid = waitpid($pid, WNOHANG);
+        if (defined($waitpid) && $waitpid == $pid) {
+            delete( $CHILD_PID{$pid} );
+            if ($$ == $PID_MAIN_THREAD) {
+                CORE::exit() if $waitpid == $SHARED && !$MAIN_EXIT_WITH_ABRT;
+            }
+        }
+    }
 } #REAPER
+
+#---------------------------------------------------------------------------
+# Shared server reaper
+
+sub REAPER_SHARED_DAEMON {
+
+# Localize system error and status variables
+# While we have zombie processes, loop and reap
+#  Store exit value if process was main thread and exit value not already set
+#  Immediately exit shared server
+
+    local $!; local $?;
+    while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
+        if ($pid == $PID_MAIN_THREAD) {
+            $EXIT_VALUE = ($? >> 8) & 0xFF unless defined($EXIT_VALUE);
+            $RUNNING = 0;
+        }
+    }
+} #REAPER_SHARED_DAEMON
+
+#---------------------------------------------------------------------------
+# Special ABRT signal handler for main thread
+
+sub _sigtrap_handler_main_abrt {
+
+# Revert to system default CHLD handler (most portable exit behavior)
+# Just reutrn if ABRT already handled, or if main thread is shutting down
+# Mark main thread as exiting due to ABRT from shared process
+# Exit immediately
+
+    $forks::signals::sig->{CHLD} = 'DEFAULT';
+    return if $MAIN_ABRT_HANDLED++ || $SHUTTING_DOWN || $SHUTTING_DOWN_END;
+    $MAIN_EXIT_WITH_ABRT = 1;
+    CORE::exit();
+} #_sigtrap_handler_main_abrt
 
 #---------------------------------------------------------------------------
 # Default sigtrap handler
 
-sub _sigtrap_handler {
+sub _sigtrap_handler_defined {
 
 # Obtain the signal sent
-# Print a general warning (if not main thread)
+# If valid signal and this is a valid thread
+#  Defer the signal if not main thread and currently not exchanging with server
+
+    my ($sig) = @_;
+    if ($sig && exists($ISATHREAD{$$}) && defined($PID) && $$ == $PID) {
+        if ($threads::SEND_IN_PROGRESS
+                || ($threads::RECV_IN_PROGRESS && length($threads::RECV_DATA) > 0)) {
+            push @DEFERRED_SIGNAL, $sig;
+            return;
+        }
+    }
+    return 1;
+}
+
+sub _sigtrap_handler_undefined {
+
+# Call defined thread sig handler routine
+# If valid signal and this is a valid thread (not main thread)
+#  Print a general warning
 # Mark this thread as shutting down (for quiet exit)
 # Exit
 
     my ($sig) = @_;
-    print STDERR "Signal SIG$sig received, but no signal handler set"
-        ." for thread $TID\n"
-        if exists($ISATHREAD{$$}) && $TID && $$ == $PID
-            && warnings::enabled('threads');
+    return unless _sigtrap_handler_defined(@_);
+    if ($sig && exists($ISATHREAD{$$}) && defined($PID) && $$ == $PID && $TID) {
+        print STDERR "Signal SIG$sig received, but no signal handler set"
+            ." for thread $TID\n"
+            if warnings::enabled('threads');
+    }
     $SHUTTING_DOWN = 1;
     CORE::exit();
-} #_sigtrap_handler
+} #_sigtrap_handler_undefined
 
 #---------------------------------------------------------------------------
-#  IN: 1 class (ignored)
-#      2..N subroutines to export (default: async only)
+# Shared variable server sigtrap handler
 
-sub import {
+sub _sigtrap_handler_shared {
 
-# Obtain the class
-# Add filter if we're filtering
+# Obtain the signal sent
+# Propegate signal to main thread
 
-    my $self = shift;
-    filter_add( bless {},$self ) if $filtering;
+    my ($sig) = @_;
+    CORE::kill($sig, $PID_MAIN_THREAD);
+} #_sigtrap_handler_shared
 
+#---------------------------------------------------------------------------
+# Default module initializaton handler
+
+sub _init {
+
+# Return if module already initialized
 # Fake that threads.pm was really loaded (this is the first time we're here)
 
+    return if $HANDLED_INIT;
     if (defined $INC{'forks.pm'}) {
         $INC{'threads.pm'} ||= $INC{'forks.pm'};
     } elsif (defined $INC{'threads.pm'} && $forks::threads_override) {
         $INC{'forks.pm'} ||= $INC{'threads.pm'}
     } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
         _croak( "Can not mix 'use forks' with real 'use threads'" )
-    }
-
-# Overload string context of thread object to return TID, if requested
-# If there seems to be a threads.pm loaded
-#  If threads.pm appears loaded
-#   Die if it really was a 'use threads'
-#  Perform the export needed
-#  And return
-# Else
-#  Perform the export needed
-
-    if ((my $idx = List::MoreUtils::firstidx(
-        sub { $_ eq 'stringify' }, @_)) >= 0) {
-        import overload '""' => \&stringify;
-        splice(@_, $idx, 1);
-    }
-    if ($HANDLED_INIT) {
-        _export( scalar(caller()),@_ );
-        return;
-    } else {
-        _export( scalar(caller()),@_ );
     }
 
 _log( " ! global startup" ) if DEBUG;
@@ -872,49 +1058,163 @@ _log( " ! global startup" ) if DEBUG;
     }
     _nonblock( $QUERY );
 
-# Make sure that children will be reaped automatically
-# Enable custom CHLD signal handler, if necessary
-# If we appear to be in the child
-#  Die if the fork really failed
-#  Store PID of shared in $SHARED for server exit later
-#  Start handling requests as the server
-# Mark PID for reaping, if using custom CHLD signal handler
-# Make this thread 0
+# Perform the fork
+# Die if the fork really failed
+
+    my $forkpid = fork;
+    _croak( "Could not start initial fork" ) unless defined( $forkpid );
+
+# If shared server should be child process of main thread
+#  If we are in the parent (main thread)
+#   Do stuff
+#  Else (we are in the child (shared server))
+#   Do stuff
+# Else
+#  If we are in the parent (shared server)
+#   Do stuff
+#  Else (we are in the child (main thread))
+#   Do stuff
+
+    if ($THREADS_INTEGRATED_MODEL) {
+        if ($forkpid) {
+            $PID_MAIN_THREAD = $$;
+            $SHARED = $forkpid;
+            _init_main(1);
+        } else {
+            $PID_MAIN_THREAD = getppid();
+            $SHARED = $$;
+            _server_pre_startup();
+            _init_server();
+        }
+    } else {
+        if ($forkpid) {
+            $PID_MAIN_THREAD = $forkpid;
+            $SHARED = $$;
+            _server_pre_startup();
+            _init_server(1);
+        } else {
+            $PID_MAIN_THREAD = $$;
+            $SHARED = getppid();
+            _init_main();
+        }
+    }
+
 # Mark forks initialization as complete
 
-    $SIG{CHLD} = 'IGNORE';
-    unless ($FORCE_SIGCHLD_IGNORE) {
-        my $system_test;
-        {
-            local %ENV;
-            $ENV{PATH} = "/bin:/usr/bin";
-            local $SIG{__WARN__} = sub {};
-            $system_test = system('test');
-        }
-        if ($system_test == -1) {
-            $SIG{CHLD} = sub { reaper::REAPER ( shift, \&REAPER ); };
-            $CUSTOM_SIGCHLD = 1;
-        } else {
-            $CUSTOM_SIGCHLD = 0;
-        }
-    }
-    _server_pre_startup();
-    unless ($SHARED = fork) {
-        _croak( "Could not start initial fork" ) unless defined( $SHARED );
-        $SHARED = $$;
-        return &_server;
-    }
-    reapPid($SHARED) if $CUSTOM_SIGCHLD;
-    _init_thread();
     $HANDLED_INIT = 1;
-} #forks::import
+} #_init
+
+#---------------------------------------------------------------------------
+# Default main thread initializaton handler
+
+sub _init_main {
+
+# Store snapshot of user-installed signal handlers
+# Reset all signal handlers to default
+# Enable custom ABRT signal handler, for main thread control
+# Enable custom CHLD signal handler,
+# Configure signal handlers
+# Make this thread 0
+# Overload %SIG for safest forks-aware signal behavior
+# Restore user-installed signal handlers
+
+    my $is_parent = shift;
+
+    my %oldsig = %SIG;
+    delete( @SIG{keys %SIG} );
+    import sigtrap ('handler', \&_sigtrap_handler_undefined,
+        qw(normal-signals USR1 USR2 error-signals));
+    my %defined_sigs = map { $_ => \&_sigtrap_handler_defined }
+        map(defined $SIG{$_} && $SIG{$_} ne '' ? $_ : (), keys %SIG);
+    $SIG{ABRT} = \&_sigtrap_handler_main_abrt;
+    $SIG{CHLD} = $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER;
+    $defined_sigs{ABRT} = $SIG{ABRT};
+    $defined_sigs{CHLD} = $SIG{CHLD};
+
+    _init_thread();
+
+    import forks::signals ifdef => \%defined_sigs;
+    $SIG{$_} = $oldsig{$_} foreach map(defined $_ ? $_ : (), keys %oldsig);
+
+# Overload global exit to conform to ithreads API.
+
+    {
+        no warnings 'redefine';
+        *CORE::GLOBAL::exit = *CORE::GLOBAL::exit = sub {
+            threads::_command( '_toexit',$_[0] );
+            defined $_[0] ? CORE::exit($_[0]) : CORE::exit();
+        };
+    }
+} #_init_main
+
+#---------------------------------------------------------------------------
+# Default thread server initializaton handler
+
+sub _init_server {
+
+# Reset all signal handlers to default
+# If is parent
+#  Configure signal handlers
+#  Configure child signal handler
+# Start handling requests as the server
+
+    my $is_parent = shift;
+    delete( @SIG{keys %SIG} );
+    if ($is_parent) {
+        import sigtrap ('handler', \&_sigtrap_handler_shared,
+            qw(normal-signals USR1 USR2 die error-signals));
+        $SIG{CHLD} = \&REAPER_SHARED_DAEMON;
+    }
+    &_server;
+} #_init_server
+
+#---------------------------------------------------------------------------
+#  IN: 1 class (ignored)
+#      2..N subroutines to export (default: async only)
+
+sub import {
+
+# Obtain the class
+# Add filter if we're filtering
+
+    my $self = shift;
+    filter_add( bless {},$self ) if $filtering;
+
+# Overload string context of thread object to return TID, if requested
+
+    if ((my $idx = List::MoreUtils::firstidx(
+        sub { $_ eq 'stringify' }, @_)) >= 0) {
+        import overload '""' => \&stringify;
+        splice(@_, $idx, 1);
+    }
+
+# Initialize module thread server process, if required
+
+    _init();
+
+# Set exit context of threads, if requested
+
+    if ((my $idx = List::MoreUtils::firstidx(
+        sub { $_ eq 'exit' }, @_)) >= 0) {
+        my @args = splice(@_, $idx, 2);
+        if ($args[1] eq EXIT_THREADS_ONLY) {
+            _command( '_set_threads_exit_only',1 );
+        } elsif ($args[1] eq EXIT_THREAD_ONLY) {
+            threads->set_thread_exit_only(1);
+        }
+    }
+    
+# Perform the export needed
+
+    _export( scalar(caller()),@_ );        
+} #import
 
 BEGIN {
 
 # forks::shared and threads::shared share same import method
 
     *forks::import = *forks::import = \&import;
-}
+} #_BEGIN
 
 # Functions to allow external modules an API hook to specific runtime states
 
@@ -925,73 +1225,103 @@ sub _end_server_post_shutdown {}
 
 #---------------------------------------------------------------------------
 
-END {
+sub _END {
 
-# Localize $? to prevent accidental override during shutdown
-# Revert to simple CHLD handler to insure portable, reliable shutdown
+# Revert to default CHLD handler to insure portable, reliable shutdown
+# Localize $! and $? to prevent accidental override during shutdown
 # If this process is the shared server
 #  Calculate and report stats on running and/or unjoined threads (excluding main thread)
 #  Forcefully terminate any lingering thread processes (except main thread)
+#  Forcefully terminate main thread (allowing END block to perform cleanup)
 #  Shutdown the socket server
 #  Delete UNIX socket file if the socket file exists
 #  Allow external modules opportunity to clean up thread process group resources
-#  Return now
-# If this process is a thread (and wasn't a forked process from a thread)
-#  Mark this thread as shutting down (in case exited via exit() or a signal)
-#  Indicate that this process has been shut down to the server
+# If this process is a valid thread (including main thread if $THREADS_INTEGRATED_MODEL)
+#  Mark this thread as shutting down
+#  Indicate that this process has been shut down to the server (if appropriate)
 #  Mark this thread as shut down (so we won't send or receive anymore)
+#  If this is main thread using non-daemon model
+#   Wait a bit for shared process to exit (or hard kill if it doesn't respond)
+#   Synchronize thread exit status with shared process (as required)
+# Alter exit status, if required
 
-    local $?;
-    $SIG{CHLD} = 'IGNORE';
-    if (!exists( $ISATHREAD{$$} ) && defined($SHARED) && $$ == $SHARED) {
-        my $running_and_unjoined = 0;
-        my $finished_and_unjoined = 0;
-        my $running_and_detached = 0;
-        foreach my $tid (grep(!/^0$/, keys %TID2PID)) {
-            if (!exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid}) {
-                $running_and_unjoined++
-                    if !exists $RESULT{$tid} && !exists $JOINED{$tid};
-                $finished_and_unjoined++ if exists $RESULT{$tid};
+    $forks::signals::sig->{CHLD} = 'DEFAULT';
+    LOCALEXITBLOCK: {
+        local $!; local $?;
+        if (!exists( $ISATHREAD{$$} ) && defined($SHARED) && $$ == $SHARED) {
+            my $running_and_unjoined = 0;
+            my $finished_and_unjoined = 0;
+            my $running_and_detached = 0;
+            foreach my $tid (grep(!/^0$/, keys %TID2PID)) {
+                if ($DETACHED !~ m/\b$tid\b/) {
+                    $running_and_unjoined++
+                        if !exists $RESULT{$tid} && exists $NOTJOINED{$tid};
+                    $finished_and_unjoined++ if exists $RESULT{$tid};
+                }
+            }
+            foreach (grep(!/^0$/, keys %DETACHED_NOTDONE)) {
+                $running_and_detached++;
+            }
+
+            print STDERR "Perl exited with active threads:\n"
+                ."\t$running_and_unjoined running and unjoined\n"
+                ."\t$finished_and_unjoined finished and unjoined\n"
+                ."\t$running_and_detached running and detached\n"
+                if ($running_and_unjoined 
+                    || $finished_and_unjoined || $running_and_detached);
+
+            my @pidtokill;
+            while (my ($tid, $client) = each %TID2CLIENT) {
+                eval {
+                    my $written = send( $client,'',0 );
+                    if (defined( $written )) {
+                        push @pidtokill, $TID2PID{$tid}
+                            if $tid && defined $TID2PID{$tid}
+                                && CORE::kill(0, $TID2PID{$tid});
+                    };
+                };
+            }
+            CORE::kill('SIGKILL', $_) foreach @pidtokill;
+            CORE::kill('SIGABRT', $PID_MAIN_THREAD)
+                if CORE::kill(0, $PID_MAIN_THREAD);
+
+            $QUERY->shutdown(2) if defined $QUERY;
+            unlink($PORT) if $THREADS_UNIX && -S $PORT;
+
+            _end_server_post_shutdown();
+        } elsif (exists( $ISATHREAD{$$} ) && defined($PID) && $$ == $PID && ($THREADS_INTEGRATED_MODEL || $TID)) {
+            $SHUTTING_DOWN_END = 1;
+            _command( '_shutdown',$TID )
+                if CORE::kill(0, $SHARED) && ($TID > 0 || !$MAIN_ABRT_HANDLED);
+            $SHUTDOWN = 1;
+
+            if ($THREADS_INTEGRATED_MODEL && $TID == 0) {
+                local $!;
+                local $SIG{ALRM} = sub { die };
+                alarm(3);
+                eval { waitpid($SHARED, 0); alarm(0); };
+                if ($@) {
+                    CORE::kill('SIGHUP', $SHARED) if CORE::kill(0, $SHARED);   #TODO: do we really need to be this agressive?
+                } else {
+                    $EXIT_VALUE = ($? >> 8) & 0xFF if $MAIN_EXIT_WITH_ABRT;
+                }
             }
         }
-        foreach my $tid (grep(!/^0$/, keys %DETACHED)) {
-            $running_and_detached++
-                if exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid};
-        }
-
-        print STDERR "Perl exited with active threads:\n"
-            ."\t$running_and_unjoined running and unjoined\n"
-            ."\t$finished_and_unjoined finished and unjoined\n"
-            ."\t$running_and_detached running and detached\n"
-            if ($running_and_unjoined 
-                || $finished_and_unjoined || $running_and_detached);
-
-        my @pidtokill;
-        while (my ($tid, $client) = each %TID2CLIENT) {
-            eval {
-                my $written = send( $client,'',0 );
-                if (defined( $written )) {
-                    push @pidtokill, $TID2PID{$tid}
-                        if $tid && defined $TID2PID{$tid}
-                            && CORE::kill(0, $TID2PID{$tid});
-                };
-            };
-        }
-        CORE::kill('SIGKILL', $_) foreach @pidtokill;
-
-        $QUERY->shutdown(2) if defined $QUERY;
-        unlink($PORT) if $THREADS_UNIX && -S $PORT;
-        
-        _end_server_post_shutdown();
-
-        return;
     }
-    if (exists( $ISATHREAD{$$} ) && $$ == $PID) {
-        $SHUTTING_DOWN = 1;
-        _command( '_shutdown',$TID );
-        $SHUTDOWN = 1;
-    }
-} #END
+    $? = $EXIT_VALUE if defined $EXIT_VALUE;
+} #_END
+
+#---------------------------------------------------------------------------
+
+sub _CHECK {
+
+# Call end block routine
+# Exit with non-zero value if shared server, to prevent multiple compile check reports
+
+    _END();
+    CORE::exit(1)
+        if (!exists( $ISATHREAD{$$} ) && defined($SHARED) && $$ == $SHARED);
+} #_CHECK
 
 #---------------------------------------------------------------------------
 
@@ -1004,23 +1334,22 @@ sub _server {
 # Set nice value if environment variable set and if we're running as root
 # Mark the parent thread id as detached
 
+    { my $oldfh = select(STDOUT); $| = 1; select($oldfh); }
     POSIX::nice( $SERVER_NICE ) if $SERVER_NICE && !$<;
-    $DETACHED{$NEXTTID} = undef;
+    $DETACHED = $NEXTTID;
 
 # Create the select object in which all the connections are stored
-# Initialize the hash with stringified object to real object mapping
 # Initialize the length of message to be received hash
 # Initialize the received message hash
 # Initialize the var to hold current time (for time calculations each loop)
 
     my $select = IO::Select->new( $QUERY );
-    my %client;
     my %toread;
     my %read;
     my $curtime;
 
 # Initialize the number of polls
-# While we're running in the main dispatch loop (or data pending for main thread)
+# While we're running in the main dispatch loop
 #  Update timedwaiting index
 #  Get current time
 #  Load next event timedwaiting expiration time (if any)
@@ -1031,7 +1360,7 @@ sub _server {
 
     my $polls = 0;
     _server_post_startup();
-    while ($RUNNING || exists $WRITE{$TID2CLIENT{0}}) {
+    while ($RUNNING || %DONEWITH) {
 if (DEBUG) {
  my $clients = keys %WRITE;
  _log( " ! $clients>>" ) if $clients;
@@ -1082,7 +1411,7 @@ _log( " ! <<".@reading ) if DEBUG and @reading;
 #    And reloop
 
 _log( " ! adding thread $NEXTTID" ) if DEBUG;
-                $TID2CLIENT{$NEXTTID} = $client{$client} = $client;
+                $TID2CLIENT{$NEXTTID} = $client;
                 $CLIENT2TID{$client} = $NEXTTID;
                 $select->add( $client );
                 $WRITE{$client} = _pack_response( ['_set_tid',$NEXTTID++] );
@@ -1172,6 +1501,10 @@ _log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if DEBUG;
                 }
             } elsif ($! == EWOULDBLOCK || $! == EAGAIN || $! == EINTR) {
                 #defer writing this time around
+            } elsif ($! == ECONNRESET && $CLIENT2TID{$write} == 0) {
+                #main thread exited: wait for SIGCHLD
+                delete( $WRITE{$write} );
+                next;
             } else {
                 _croak( "Error ".($! ? $! + 0 : '').": Could not write ".(length $WRITE{$write})
                     ." bytes to $CLIENT2TID{$write}: ".($! ? $! : '') );
@@ -1220,20 +1553,22 @@ if (DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
         while (my ($tid, $signal) = each %TOSIGNAL) {
             delete( $TOSIGNAL{$tid} );
             next unless defined $TID2CLIENT{$tid};
-            _signal_thread($tid, $signal);
+            my $success = _signal_thread($tid, $signal);
+            CORE::kill('SIGKILL', $TID2PID{$tid})
+                unless $success;
 _log( "sent $TID2PID{$tid} signal ".abs($signal) ) if DEBUG;
             _cleanup_unsafe_thread_exit($tid)
-                if $signal eq 'KILL' || $signal eq 'SIGKILL'
+                if !$success || $signal eq 'KILL' || $signal eq 'SIGKILL'
                     || ($signal =~ m/^\d+$/ && $signal == SIGKILL);
         }
 
 # If next check time has expired
-# For all of the clients that are currently blocking on threads
-#  Check that process is still alive; otherwise, cleanup dead thread
-#   If that did not clear the waiting thread
-#    Output a warning (from server)
-#    Notify the thread with undef (should really be an error)
-
+#  For all of the clients that are currently blocking on threads
+#   Check that process is still alive; otherwise, cleanup dead thread
+#    If that did not clear the waiting thread
+#     Output a warning (from server)
+#     Notify the thread with undef (should really be an error)
+#  Also check that main thread is still alive
         if ($curtime >= $BLOCKING_JOIN_CHECK_TS_NEXT) {
             while (my $tid = each %BLOCKING_JOIN) {
                 unless (CORE::kill(0, $TID2PID{$tid})) {
@@ -1245,6 +1580,7 @@ _log( "sent $TID2PID{$tid} signal ".abs($signal) ) if DEBUG;
                 }
             }
             $BLOCKING_JOIN_CHECK_TS_NEXT = $curtime + $BLOCKING_JOIN_CHECK_PERIOD;
+            $RUNNING = 0 unless CORE::kill(0, $PID_MAIN_THREAD);
         }
 
 #  For all of the clients that we're done with
@@ -1252,7 +1588,7 @@ _log( "sent $TID2PID{$tid} signal ".abs($signal) ) if DEBUG;
 #   Make sure we won't check this client again
 
         while (my $client = each %DONEWITH) {
-            next if exists( $WRITE{$client} );
+            next if $RUNNING && exists( $WRITE{$client} );
 _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
             delete( $DONEWITH{$client} );
 
@@ -1260,20 +1596,24 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
 #   Obtain the client object (rather than its stringification)
 #   Remove the client from polling loop
 #   Properly close the client from this end
+#   Mark server to shutdown if we were waiting for this client to exit
 
             my $tid = $CLIENT2TID{$client};
             $client = $TID2CLIENT{$tid};
             $select->remove( $client );
             close( $client );
+            $RUNNING = 0 if $RUNNING eq $client;
 
 #   Do the clean up
 
             my $pid = $TID2PID{$tid};
             delete( $TID2CLIENT{$tid} );
             delete( $CLIENT2TID{$client} );
-            delete( $PID2TID{$pid} );
+            delete( $PID2TID{$pid} ) if defined $pid;
             delete( $TID2PID{$tid} )
-               if exists( $DETACHED{$tid} ) or exists( $JOINED{$tid} );
+               if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
+            delete( $TID2CONTEXT{$tid} )
+               if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
         }
     }
 
@@ -1282,7 +1622,7 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
 
 _log( " ! global exit: did $polls polls" ) if DEBUG;
     _end_server_pre_shutdown();
-    CORE::exit();
+    defined $EXIT_VALUE ? CORE::exit($EXIT_VALUE) : CORE::exit();
 } #_server
 
 #---------------------------------------------------------------------------
@@ -1499,7 +1839,11 @@ sub _signal_thread {
     my $signum = $sigidx == -1
         ? $signal : (split(/\s+/, $Config::Config{sig_name}))[$sigidx];
     
-    CORE::kill($signal, $TID2PID{$tid});
+    if (CORE::kill(0, $TID2PID{$tid})) {
+        return CORE::kill($signal, $TID2PID{$tid});
+    } else {
+        return 0;
+    }
 } #_signal_thread
 
 #---------------------------------------------------------------------------
@@ -1579,8 +1923,11 @@ sub _init_thread {
     _run_CLONE() if $TID;
     
 # Wait for result of registration, die if failed
+# Clear ABRT signal handler, if appropriate
 
     _croak( "Could not register pid $$ as tid $TID" ) unless _receive( $QUERY );
+    delete( $SIG{ABRT} )
+        if $TID > 0 && defined($SIG{ABRT}) && $SIG{ABRT} eq \&_sigtrap_handler_main_abrt;
 } #_init_thread
 
 #---------------------------------------------------------------------------
@@ -1607,7 +1954,7 @@ sub _pack {
     
     my $data;
     if ($is_default_pack_type) {
-        $data = pack('C', CMD_TYPE_DEFAULT).freeze( $data_aref );
+        $data = pack('C', CMD_TYPE_DEFAULT).Storable::freeze( $data_aref );
     } else {
         my $filter = $cmd_num_to_filter[$cmd_num]->[$cmd_fltr_type]->[CMD_FLTR_ENCODE];
         $data = pack('C', CMD_TYPE_INTERNAL).pack('S', $cmd_num).$filter->($data_aref);
@@ -1645,7 +1992,7 @@ sub _unpack {
     my $cmd_fltr_type = shift;
     my $type = unpack('C', substr($msg, CMD_TYPE_IDX, CMD_TYPE_LEN));
     if ($type == CMD_TYPE_DEFAULT) {
-        return (undef, @{thaw( substr($msg, CMT_TYPE_FROZEN_CONTENT_IDX) )});
+        return (undef, @{Storable::thaw( substr($msg, CMT_TYPE_FROZEN_CONTENT_IDX) )});
     } elsif ($type == CMD_TYPE_INTERNAL) {
         my $cmd_num = unpack('S', substr($msg, CMD_TYPE_INTERNAL_SUBNAME_IDX, CMD_TYPE_INTERNAL_SUBNAME_LEN));
         my $filter = $cmd_num_to_filter[$cmd_num]->[$cmd_fltr_type]->[CMD_FLTR_DECODE];
@@ -1717,14 +2064,16 @@ sub _length {
 #   Warn and exit immediately (server connection terminated, 
 #    likely due to main thread shutdown)
 #  Else (is shared server)
-#   Warn about the error
+#   Clear the error if this was main thread exiting
 #   Cleanup "dead" thread
 #   Report no data (length 0)
 # Unless we're shutting down and we're not running in debug mode
 #  Die, there was an error
 
     my $tid = defined $TID ? 'server' : $CLIENT2TID{$client};
-    my $errtxt = "Error ".($! ? $! + 0 : '').": Could not read length of message from $tid: ".($! ? $! : '');
+    my $errtxt = "Error ".($! ? $! + 0 : '')
+        .": Could not read length of message"
+        .(defined $tid ? " from $tid" : '').": ".($! ? $! : '') if $!;
     if (!$! || $! == ECONNABORTED || $! == ECONNRESET) {
         if (exists( $ISATHREAD{$$} )) {
             $SHUTTING_DOWN = 1;
@@ -1732,28 +2081,13 @@ _log( "Thread $TID terminated abnormally: $errtxt" ) if DEBUG;
 #warn "***_length: Thread $TID terminated abnormally: $errtxt";  #TODO: for debugging only
             CORE::exit();
         } else {
+            $errtxt = undef if $CLIENT2TID{$client} == 0;
             _cleanup_unsafe_thread_exit($CLIENT2TID{$client}, $errtxt);
             return 0;
         }
     }
-    _croak( $errtxt ) unless ($SHUTTING_DOWN && !DEBUG);
+    _croak( $errtxt ) unless (($SHUTTING_DOWN || $SHUTTING_DOWN_END) && !DEBUG);
 } #_length
-
-#---------------------------------------------------------------------------
-
-sub _block_sigset {
-    _croak( "Error ".($! ? $! + 0 : '').": Could not block SigSet" )
-        unless (defined POSIX::sigprocmask(SIG_BLOCK, $DEFERRED_CHLD_SIGSET));
-    return 1;
-} #_block_sigset
-
-#---------------------------------------------------------------------------
-
-sub _unblock_sigset {
-    _croak( "Error ".($! ? $! + 0 : '').": Could not unblock SigSet" )
-        unless (defined POSIX::sigprocmask(SIG_UNBLOCK, $DEFERRED_CHLD_SIGSET));
-    return 1;
-} #_unblock_sigset
 
 #---------------------------------------------------------------------------
 #  IN: 1 client object
@@ -1771,7 +2105,7 @@ sub _send {
 _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,MSG_LENGTH_LEN) )}) )
  if DEBUG;
 
-# Block signals, if using custom CHLD signal handler
+# Localize and set thread data comm flag
 # Loop while there is data to send
 #  Send the data, find out how many really got sent
 #  If data was sent
@@ -1780,39 +2114,41 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
 #  Elsif action would block or was interrupted by a signal
 #   Sleep for a short time (i.e. don't hog CPU)
 #  Else (an error occured)
-#   Unblock signals, if using custom CHLD signal handler
 #   If was ECONNABORTED (server abort) or ECONNRESET (client abort)
 #    Warn and exit immediately (server connection terminated, likely due to main thread shutdown)
 #   Die now unless shuttind down and not in debug mode
 #   Return immediately
-# Unblock signals, if using custom CHLD signal handler
+# Handle deferred signals, if any occured
 
     $frozen =~ m#^(.*)$#s;
     my ($data, $total_sent) = ($1, 0);
-    _block_sigset() if $CUSTOM_SIGCHLD;
-    while ($total_sent < $length) {
-        my $sent = send( $client,$data,0 );
-        if (defined( $sent )) {
-            substr($data, 0, $sent) = '';
-            $total_sent += $sent;
-        } elsif ($! == EWOULDBLOCK || $! == EAGAIN || $! == EINTR) {
-            sleep 0.001;
-        } else {
-            _unblock_sigset() if $CUSTOM_SIGCHLD;
-            my $errtxt = "Error ".($! ? $! + 0 : '')." when sending message to server: ".($! ? $! : '');
-            if (!$! || $! == ECONNABORTED || $! == ECONNRESET) {
-                warn "Thread $TID terminated abnormally: $errtxt"
-                    if warnings::enabled() && $TID && !$SHUTTING_DOWN;
-                $SHUTTING_DOWN = 1;
+    DEFERREDSIGBLOCK: {
+        local $threads::SEND_IN_PROGRESS = 1;
+        while ($total_sent < $length) {
+            my $sent = send( $client,$data,0 );
+            if (defined( $sent )) {
+                substr($data, 0, $sent) = '';
+                $total_sent += $sent;
+            } elsif ($! == EWOULDBLOCK || $! == EAGAIN || $! == EINTR) {
+                sleep 0.001;
+            } else {
+                my $errtxt = "Error ".($! ? $! + 0 : '')
+                    ." when sending message to server: ".($! ? $! : '');
+                if (!$! || $! == ECONNABORTED || $! == ECONNRESET) {
+                    warn "Thread $TID terminated abnormally: $errtxt"
+                        if warnings::enabled() && $TID
+                            && !$SHUTTING_DOWN && !$SHUTTING_DOWN_END;
+                    $SHUTTING_DOWN = 1;
 #warn "===Thread $TID terminated abnormally: $errtxt";   #TODO: for debugging only
-                CORE::exit();
+                    CORE::exit();
+                }
+                _croak( $errtxt )
+                    unless (($SHUTTING_DOWN || $SHUTTING_DOWN_END) && !DEBUG);
+                return;
             }
-            _croak( $errtxt ) unless ($SHUTTING_DOWN && !DEBUG);
-            return;
         }
     }
-    
-    _unblock_sigset() if $CUSTOM_SIGCHLD;
+    $SIG{$_}->($_) while (shift @DEFERRED_SIGNAL);
 } #_send
 
 #---------------------------------------------------------------------------
@@ -1822,14 +2158,16 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
 sub _receive {
 
 # Obtain the client object
+# Localize and set thread comm flag
 # Block signals, if using custom CHLD signal handler
 # Obtain the length
 # Initialize the data to be received
 
     my $client = shift;
-    _block_sigset() if $CUSTOM_SIGCHLD;
-    my $length = my $todo = _length( $client );
-    my $frozen;
+    DEFERREDSIGBLOCK: {
+        local $threads::RECV_IN_PROGRESS = 1;
+        my $length = my $todo = _length( $client );
+        my $frozen;
 
 # While there is data to get
 #  Get some data
@@ -1843,32 +2181,34 @@ sub _receive {
 #   Set up for next attempt to fetch
 #  ElseIf call would block or was interrupted by signal
 #   Sleep a bit (to not take all CPU time)
-# Unblock signals, if using custom CHLD signal handler
+# Handle deferred signals, if any occured
 
-    while ($todo > 0) {
-        my $result = recv( $client,my $data,$todo,0 );
-        if (defined $result) {
-            $frozen .= $data;
-            if (length( $frozen ) == $length) {
-                $frozen =~ m#^(.*)$#s;
-                my @result = _unpack_response( $1 );
-                shift @result;
+        while ($todo > 0) {
+            local $threads::RECV_DATA = '';
+            my $result = recv( $client,$threads::RECV_DATA,$todo,0 );
+            if (defined $result) {
+                $frozen .= $threads::RECV_DATA;
+                if (length( $frozen ) == $length) {
+                    $frozen =~ m#^(.*)$#s;
+                    my @result = _unpack_response( $1 );
+                    shift @result;
 _log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
-                return CORE::wantarray ? @result : $result[0];
+                    return CORE::wantarray ? @result : $result[0];
+                }
+                $todo -= length( $threads::RECV_DATA );
+            } elsif ($! == EWOULDBLOCK || $! == EAGAIN || $! == EINTR) {
+                sleep 0.001;
+            } else {
+                last;
             }
-            $todo -= length( $data );
-        } elsif ($! == EWOULDBLOCK || $! == EAGAIN || $! == EINTR) {
-            sleep 0.001;
-        } else {
-            last;
         }
     }
-    _unblock_sigset() if $CUSTOM_SIGCHLD;
+    $SIG{$_}->($_) while (shift @DEFERRED_SIGNAL);
 
 # Unless we're shutting down and we're not running in debug mode
 #  Die now (we didn't get the data)
 
-    unless ($SHUTTING_DOWN && !DEBUG) {
+    unless (($SHUTTING_DOWN || $SHUTTING_DOWN_END) && !DEBUG) {
         _croak( "Error ".($! ? $! + 0 : '').": Did not receive all bytes from $CLIENT2TID{$client}: ".($! ? $! : '') );
     }
 } #_receive
@@ -1884,12 +2224,16 @@ _log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
 
 sub _command {
 
-# Return now if this thread has shut down already
+# Return now if this thread has shut down already or if server already shutdown
 # Send the command + parameters
+# Return immediately if main thread is shutting down in non-daemon mode
 # Return the result
 
-    return if $SHUTDOWN;
+    return if (defined($PID) && $$ != $PID) || $SHUTDOWN
+        || (($SHUTTING_DOWN || $SHUTTING_DOWN_END) && !$QUERY);
     _send( $QUERY,@_ );
+    return if $$ == $PID_MAIN_THREAD
+        && $SHUTTING_DOWN_END && $THREADS_INTEGRATED_MODEL;
     _receive( $QUERY );
 } #_command
 
@@ -1940,9 +2284,13 @@ sub _register_pid {
 #   If this is the first time this thread is being registered
 #    Register this thread
 #    Make sure we can do a reverse lookup as well
-#    Store return context of thread
 #    Push tid on ppid2tid queue, if thread has a parent (e.g. not main thread)
-#    Mark the thread as detached if so requested
+#    If thread is marked as detached
+#     Add to the list of detached threads
+#     Store return context of thread
+#    Else
+#     Mark thread as joinable
+#     Store the return context of the thread
 #    Set status to indicate success
 
     my ($client,$tid,$pid,$ppid,$thread_context,$detach) = @_;
@@ -1952,9 +2300,14 @@ sub _register_pid {
             unless (exists $PID2TID{$pid}) {
                 $TID2PID{$tid} = $pid;
                 $PID2TID{$pid} = $tid;
-                $TID2CONTEXT{$tid} = $thread_context;
                 push @{$PPID2CTID_QUEUE{$ppid}}, $tid if $ppid;
-                $DETACHED{$tid} = undef if $detach;
+                if ($detach) {
+                    $DETACHED .= ",$tid";
+                    $DETACHED_NOTDONE{$tid} = undef;
+                } else {
+                    $NOTJOINED{$tid} = undef;
+                    $TID2CONTEXT{$tid} = $thread_context;
+                }
                 $status = 1;
             }
         }
@@ -1993,7 +2346,9 @@ sub _pid2tid { $WRITE{$_[0]} = _pack_response( [$PID2TID{$_[1]}] ) } #_pid2tid
 #      2 process id of thread calling this method
 # OUT: 1 associated thread id
 
-sub _ppid2ctid_shift { $WRITE{$_[0]} = _pack_response( [shift @{$PPID2CTID_QUEUE{$_[1]}}] ); } #_ppid2ctid_shift
+sub _ppid2ctid_shift {
+    $WRITE{$_[0]} = _pack_response( [shift @{$PPID2CTID_QUEUE{$_[1]}}] );
+} #_ppid2ctid_shift
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2021,19 +2376,83 @@ sub _list_tid_pid {
     while (my($tid,$pid) = each %TID2PID) {
         if (@_) {
             if ($_[0]) {
-                next if exists( $DETACHED{$tid} ) or exists( $JOINED{$tid} )
+                next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
                     or exists( $RESULT{$tid} );
             } else {
-                next if exists( $DETACHED{$tid} ) or exists( $JOINED{$tid} )
+                next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
                     or !exists( $RESULT{$tid} );
             }
         } else {
-            next if exists( $DETACHED{$tid} ) or exists( $JOINED{$tid} );
+            next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
         }
         push( @param,$tid,$pid );
     }
     $WRITE{$client} = _pack_response( [@param] );
 } #_list_tid_pid
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 client process exit value
+# OUT: 1 thread exit status
+
+sub _toexit {
+
+# Obtain the client object
+# Unless thread exit should be localized to thread, main thread exited,
+# or another thread performed global exit (waiting for it to shutdown)
+#  Store exit value
+#  Mark server process as ready to exit when this thread exits
+# Make sure the client continues
+
+    my $client = shift;
+    my $exit_value = shift;
+    unless ($CLIENT2TID{$client} == 0
+            || defined ( $EXIT_VALUE ) || $THREADS_EXIT
+            || exists( $THREAD_EXIT{$CLIENT2TID{$client}} )) {
+        $EXIT_VALUE = $exit_value;
+        $RUNNING = $client;
+    }
+    $WRITE{$client} = $true;
+} #_toexit
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 thread id to which rule will apply
+#      3 boolean state rule
+# OUT: 1 thread exit status
+
+sub _set_thread_exit_only {
+
+# Obtain the client object
+# Set the appropriate client thread exit method
+# Make sure the client continues
+
+    my $client = shift;
+    my $tid = shift;
+    my $thread_exit_only = shift @_ ? 1 : 0;
+    if ($thread_exit_only) {
+        $THREAD_EXIT{$tid} = undef;
+    } else {
+        delete( $THREAD_EXIT{$tid} );
+    }
+    $WRITE{$client} = $true;
+} #_set_thread_exit_only
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 thread id calling this method
+# OUT: 1 thread exit status
+
+sub _set_threads_exit_only {
+
+# Obtain the client object
+# Set the global thread exit override state
+# Make sure the client continues
+
+    my $client = shift;
+    $THREADS_EXIT = $_[0] ? 1 : 0;
+    $WRITE{$client} = $true;
+} #_set_threads_exit_only
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2043,6 +2462,8 @@ sub _list_tid_pid {
 sub _tojoin {
 
 # Obtain the client object
+# Obrain the client error (if any)
+# Store the client error if there was an error
 # If there is a thread id for this client, obtaining it on the fly
 #  If there is a thread waiting for this result, obtaining client on the fly
 #   Join the thread with this result
@@ -2053,14 +2474,16 @@ sub _tojoin {
 # Make sure the client knows the result
 
     my $client = shift;
+    my $error = shift;
+    $ERROR{$CLIENT2TID{$client}} = $error if defined $error;
     if (my $tid = $CLIENT2TID{$client}) {
         if (exists $BLOCKING_JOIN{$tid}) {
 #warn "*** the result I got was ".scalar(@_).": ".CORE::join(',', @_);  #TODO: for debugging only
             _isjoined( $BLOCKING_JOIN{$tid},$tid,@_ );
-        } elsif (!exists $DETACHED{$tid}) {
+        } elsif ($DETACHED !~ m/\b$tid\b/) {
             $RESULT{$tid} = \@_;
-        } elsif (exists $DETACHED{$tid}) {
-            $DETACHED_DONE{$tid} = undef;
+        } elsif ($DETACHED =~ m/\b$tid\b/) {
+            delete( $DETACHED_NOTDONE{$tid} );
         }
     }
     $WRITE{$client} = $true;
@@ -2075,12 +2498,32 @@ sub _detach {
 
 # Obtain the parameters
 # Set flag whether first time detached
-# Detach this thread
+# If another thread is already waiting to join this thread
+#  Don't allow thread to become deached
+#  Warn about this issue (should become local thread error)
+# Else
+#  Detach this thread
+#  If target thread is still running
+#   Mark it as detached and running
+#  Else
+#   Cleanup internal states (results) related to thread exit
 # Let the client know the result
 
     my ($client,$tid) = @_;
-    my $detached = !exists( $DETACHED{$tid} );
-    $DETACHED{$tid} = undef;
+    my $detached = $DETACHED !~ m/\b$tid\b/;
+    if (exists $BLOCKING_JOIN{$tid}) {
+        $detached = 0; #TODO: must become client error: die "Attempt to detach a thread already pending join by another thread"
+        warn "Thread $CLIENT2TID{$client} attempted to detach a thread ($tid) pending join by another thread ($CLIENT2TID{$BLOCKING_JOIN{$tid}})";
+    }
+    if ($detached) {
+        $DETACHED .= ",$tid";
+        if (defined $NOTJOINED{$tid}) {
+            $DETACHED_NOTDONE{$tid} = undef;
+        } else {
+            delete( $RESULT{$tid} );
+        }
+        delete( $TID2CONTEXT{$tid} );
+    }
     $WRITE{$client} = _pack_response( [$detached] );
 } #_detach
 
@@ -2119,29 +2562,44 @@ sub _join {
 #  Start waiting for the result to arrive
 
     my ($client,$tid) = @_;
-    if (exists $DETACHED{$tid}) {
+    if ($DETACHED =~ m/\b$tid\b/) {
         warn "Thread $CLIENT2TID{$client} attempted to join a detached thread: $tid";
-        $WRITE{$client} = $undef; #TODO: must become error: die "Cannot join a detached thread"
+        $WRITE{$client} = $undef; #TODO: must become client error: die "Cannot join a detached thread"
     } elsif (exists $RESULT{$tid}) {
 #warn "case 2: $CLIENT2TID{$client} joining $tid immediately";  #TODO: for debugging only
         _isjoined( $client,$tid,@{$RESULT{$tid}} );
-    } elsif (exists( $JOINED{$tid} )) {
-        warn "Thread $CLIENT2TID{$client} attempted to an already joined thread: $tid";
-        $WRITE{$client} = $undef; #TODO: must become error: die "Thread already joined"
+    } elsif (!exists( $NOTJOINED{$tid} )) {
+        warn "Thread $CLIENT2TID{$client} attempted to join an already joined thread: $tid";
+        $WRITE{$client} = $undef; #TODO: must become client error: die "Thread already joined"
     } elsif (!exists $TID2CLIENT{$tid}) {
 #warn "case 4: $CLIENT2TID{$client} cannot join $tid";  #TODO: for debugging only
-        $WRITE{$client} = defined $TID2CONTEXT{$tid} ? $empty : $undef;
-    } elsif (!CORE::kill(0, $TID2PID{$tid})) {
+        $WRITE{$client} = $empty;
+    } elsif (!exists( $TID2PID{$tid} ) || !CORE::kill(0, $TID2PID{$tid})) {
 #warn "case 5: $CLIENT2TID{$client} cannot join $tid";  #TODO: for debugging only
-        $WRITE{$client} = defined $TID2CONTEXT{$tid} ? $empty : $undef;
+        $WRITE{$client} = $empty;
     } elsif (defined $BLOCKING_JOIN{$tid}) {
         warn "Thread $CLIENT2TID{$client} attempted to join a thread already pending join: $tid";
-        $WRITE{$client} = $undef; # must become error: die "Thread already pending join"
+        $WRITE{$client} = $undef; # must become client error: die "Thread already pending join"
     } else {
 #warn "case 6: $CLIENT2TID{$client} blocking on $tid";  #TODO: for debugging only
         $BLOCKING_JOIN{$tid} = $client;
     }
 } #_join
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 thread id of thread to return result of
+
+sub _error {
+
+# Obtain the waiting client and the tid of which to check error status
+# Write the current error state response
+
+    my ($client,$tid) = @_;
+    $WRITE{$client} = exists $ERROR{$tid}
+        ? _pack_response( [$ERROR{$tid}] )
+        : $undef;
+} #error
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2153,7 +2611,7 @@ sub _is_detached {
 # Return boolean value to thread whether deatched or not
 
     my ($client,$tid) = @_;
-    $WRITE{$client} = exists $DETACHED{$tid} ? $true : $false;
+    $WRITE{$client} = $DETACHED =~ m/\b$tid\b/ ? $true : $false;
 } #_is_detached
 
 #---------------------------------------------------------------------------
@@ -2166,8 +2624,8 @@ sub _is_running {
 # Return boolean value to thread whether running or not
 
     my ($client,$tid) = @_;
-    $WRITE{$client} = (exists $DETACHED{$tid} && !exists $DETACHED_DONE{$tid})
-        || (defined $TID2PID{$tid} && !exists $RESULT{$tid} && !exists $JOINED{$tid})
+    $WRITE{$client} = ($DETACHED =~ m/\b$tid\b/ && exists $DETACHED_NOTDONE{$tid})
+        || (defined $TID2PID{$tid} && !exists $RESULT{$tid} && exists $NOTJOINED{$tid})
         ? $true : $false;
 } #_is_running
 
@@ -2231,11 +2689,11 @@ sub _kill {
 sub _wantarray {
 
 # Obtain client socket and TID
-# Return thread context (boolean or undef)
+# Return thread context (true, defined, or undef)
 
     my ($client,$tid) = @_;
     $WRITE{$client} = defined $TID2CONTEXT{$tid} ? $TID2CONTEXT{$tid}
-        ? $true : $false : $undef;
+        ? $true : $defined : $undef;
 } #_wantarray
 
 #---------------------------------------------------------------------------
@@ -2518,18 +2976,29 @@ sub _signal {
 
 # Obtain local copy of the client
 # Obtain ordinal
-# If the signal ordinal is the same as the lock ordinal or the variable they are waiting to relock is currently locked
-#  Add the next thread id from the list of waiting or timed waiting threads (if any) to the head of the locking list
-# Else (lock var is not same as signal var and lock var is currently unlocked)
-#  Assign lock to this tid
-#  Immediately notify blocking thread that it should continue
-# Make sure the client continues
 
     my $client = shift;
     my $ordinal = shift;
-    my ($tid, $l_ordinal);
-    if (defined $WAITING[$ordinal] && ref($WAITING[$ordinal]) eq 'ARRAY' && @{$WAITING[$ordinal]}) {
-        ($tid, $l_ordinal) = @{shift(@{$WAITING[$ordinal]})};
+
+# Get random number to determine which lock waiting list to use first
+# Obtain the thread id, target lock ordinal from randomly chosen list
+# Obtain the information from alternate list if there is no thread id yet
+
+    my $rand = rand;
+    my ($tid, $l_ordinal) = $rand > 0.5
+        ? _signal_timedwaiting($ordinal) : _signal_waiting($ordinal);
+    ($tid, $l_ordinal) = $rand > 0.5
+        ? _signal_waiting($ordinal) : _signal_timedwaiting($ordinal)
+        unless defined $tid;
+
+# If a tid was found to be waiting
+#  If the signal ordinal is the same as the lock ordinal or the variable they are waiting to relock is currently locked
+#   Add the next thread id from the list of waiting or timed waiting threads (if any) to the head of the locking list
+#  Else (lock var is not same as signal var and lock var is currently unlocked)
+#   Assign lock to this tid
+#   Immediately notify blocking thread that it should continue
+
+    if (defined $tid) {
         if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
             unshift( @{$LOCKING[$l_ordinal]}, $tid );
         } else {
@@ -2537,19 +3006,51 @@ sub _signal {
             $WRITE{$TID2CLIENT{$tid}} = $true;
         }
     }
-    elsif (defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
-        ($tid, $l_ordinal) = @{shift(@{$TIMEDWAITING{$ordinal}})}[0,3];
-        if ($ordinal == $l_ordinal || defined $LOCKED[$l_ordinal]) {
-            unshift( @{$LOCKING[$l_ordinal]}, $tid );
-        } else {
-            $LOCKED[$l_ordinal] = $tid;
-            $WRITE{$TID2CLIENT{$tid}} = $true;
-        }
-        delete $TIMEDWAITING{$ordinal} unless @{$TIMEDWAITING{$ordinal}};
-        $TIMEDWAITING_IDX_EXPIRED = 1;
-    }
+
+# Make sure the client continues
+
     $WRITE{$client} = $undef;
 } #_signal
+
+#---------------------------------------------------------------------------
+#  IN: 1 ordinal number of variable to signal one
+# OUT: 1 tid to signal
+#      2 ordinal for thread to lock
+
+sub _signal_waiting {
+
+# Initialize the thread id and target lock ordinal
+# If there exists a waiting event for this ordinal
+#  Get the next thread id from the list of waiting threads (if any)
+
+    my ($tid, $l_ordinal);
+    if (defined $WAITING[$_[0]] && ref($WAITING[$_[0]]) eq 'ARRAY'
+            && @{$WAITING[$_[0]]}) {
+        ($tid, $l_ordinal) = @{shift(@{$WAITING[$_[0]]})};
+    }
+    return ($tid, $l_ordinal);
+}
+
+#---------------------------------------------------------------------------
+#  IN: 1 ordinal number of variable to signal one
+# OUT: 1 tid to signal
+#      2 ordinal for thread to lock
+
+sub _signal_timedwaiting {
+
+# Initialize the thread id and target lock ordinal
+# If there exists a timedwaiting event for this ordinal
+#  Assign lock to this tid
+
+    my ($tid, $l_ordinal);
+    if (defined $TIMEDWAITING{$_[0]} && ref($TIMEDWAITING{$_[0]}) eq 'ARRAY'
+            && @{$TIMEDWAITING{$_[0]}}) {
+        ($tid, $l_ordinal) = @{shift(@{$TIMEDWAITING{$_[0]}})}[0,3];
+        delete $TIMEDWAITING{$_[0]} unless @{$TIMEDWAITING{$_[0]}};
+        $TIMEDWAITING_IDX_EXPIRED = 1;
+    }
+    return ($tid, $l_ordinal);
+}
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2617,16 +3118,16 @@ sub _shutdown {
 #   Try removing TID from @WAITING
 #   Try removing TID from %TIMEDWAITING
 #  Delete any messages that might have been pending for this client
-# Else (it's the main thread shutting down)
+# Else (it's the main thread shutting down and main thread is parent process)
 #  Reset running flag
 # Mark this client for deletion
 # Send result to thread to allow it to shut down
 
     my $client = shift;
     my $tid = shift;
-    if (!exists $RESULT{$tid} && !exists $JOINED{$tid}
-        && !exists $DETACHED_DONE{$tid}) {
-        _tojoin($client);
+    if ((exists $NOTJOINED{$tid} && !exists $RESULT{$tid})
+        || ($DETACHED =~ m/\b$tid\b/ && exists $DETACHED_NOTDONE{$tid})) {
+        _tojoin($client);   #TODO: report error here ($thr->error reportable)?
     }
     if ($tid) {
         while ((my $ordinal = List::MoreUtils::firstidx(
@@ -2654,10 +3155,10 @@ sub _shutdown {
                 }
             }
         }
-        $DONEWITH{$client} = undef;
-    } else {
+    } elsif ($THREADS_INTEGRATED_MODEL) {
         $RUNNING = 0;
     }
+    $DONEWITH{$client} = undef;
     $WRITE{$client} = $true;    #TODO: make sure socket is still alive, otherwise could cause server to croak on dead socket (need to protect server with correct error state--EPIPE?)
 } #_shutdown
 
@@ -2677,29 +3178,23 @@ sub _unlock_ordinal {
         return;
     }
 
-# Initialize the thread id and target lock ordinal
-# Initialize default response to true
-# If there exist any timed waiting events that expired and are waiting to relock
-#  Get the thread id and target lock ordinal
-#  Set response to false (indicating this event timed out)
+# Get random number to determine which lock waiting list to use first
+# Obtain the thread id, target lock ordinal, response from randomly chosen list
+# Obtain the information from alternate list if there is no thread id yet
 
-    my ($tid, $l_ordinal);
-    my $response = $true;
-    if (ref($TIMEDWAITING_EXPIRED[$ordinal]) eq 'ARRAY' && @{$TIMEDWAITING_EXPIRED[$ordinal]}) {
-        ($tid, $l_ordinal) = @{shift @{$TIMEDWAITING_EXPIRED[$ordinal]}};
-        $response = $false;
-    } else {
-        $l_ordinal = $ordinal;
-    }
+    my $rand = rand;
+    my ($tid, $l_ordinal, $response) = $rand > 0.5
+        ? _unlock_ordinal_timedwaiting_expired($ordinal) : _unlock_ordinal_locking($ordinal);
+    ($tid, $l_ordinal, $response) = $rand > 0.5
+        ? _unlock_ordinal_locking($ordinal) : _unlock_ordinal_timedwaiting_expired($ordinal)
+        unless defined $tid;
 
-# Obtain thread id from locking list if there is no thread id yet
 # If there is a thread id for the lock
 #  Make that the thread locking the variable
 #  And have that thread continue
 # Else (still no thread wanting to lock)
 #  Just reset the lock for this variable
 
-    $tid = shift(@{$LOCKING[$l_ordinal]}) unless defined $tid;
     if (defined $tid){
         $LOCKED[$l_ordinal] = $tid;
         $WRITE{$TID2CLIENT{$tid}} = $response;
@@ -2707,6 +3202,47 @@ sub _unlock_ordinal {
         $LOCKED[$l_ordinal] = undef;
     }
 } #_unlock_ordinal
+
+#---------------------------------------------------------------------------
+#  IN: 1 ordinal number of shared variable to unlock
+# OUT: 1 tid to acquire ordinal lock
+#      2 ordinal being locked
+#      3 response for waiting thread
+
+sub _unlock_ordinal_locking {
+
+# Obtain thread id from locking list and return the results
+
+    return (shift(@{$LOCKING[$_[0]]}), $_[0], $true);
+}
+
+#---------------------------------------------------------------------------
+#  IN: 1 ordinal number of shared variable to unlock
+# OUT: 1 tid to acquire ordinal lock
+#      2 ordinal being locked
+#      3 response for waiting thread
+
+sub _unlock_ordinal_timedwaiting_expired {
+    
+# Initialize the thread id and target lock ordinal
+# Initialize default response to true
+# If there exist any timed waiting events that expired and are waiting to relock
+#  Get the thread id and target lock ordinal
+#  Set response to false (indicating this event timed out)
+# Else
+#  Assign default target lock ordinal
+# Returns the results
+
+    my ($tid, $l_ordinal);
+    my $response = $true;
+    if (ref($TIMEDWAITING_EXPIRED[$_[0]]) eq 'ARRAY' && @{$TIMEDWAITING_EXPIRED[$_[0]]}) {
+        ($tid, $l_ordinal) = @{shift @{$TIMEDWAITING_EXPIRED[$_[0]]}};
+        $response = $false;
+    } else {
+        $l_ordinal = $_[0];
+    }
+    return ($tid, $l_ordinal, $response);
+}
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2753,13 +3289,15 @@ sub _isjoined {
 # Forget about the result (if any)
 # Forget about listing in ->list if this thread was shutdown already
 # Mark that thread as joined
+# Delete thread context information
 
     $WRITE{$client} = _pack_response( \@_ );
 #warn "case 7: tid $tid had this to say (".scalar(@_)."): ".CORE::join(',', @_);    #TODO: for debugging only
     delete( $BLOCKING_JOIN{$tid} );
     delete( $RESULT{$tid} );
     delete( $TID2PID{$tid} ) unless exists( $TID2CLIENT{$tid} );
-    $JOINED{$tid} = undef;
+    delete( $NOTJOINED{$tid} );
+    delete( $TID2CONTEXT{$tid} );
 } #_isjoined
 
 #---------------------------------------------------------------------------
@@ -2854,7 +3392,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.23.
+This documentation describes version 0.24.
 
 =head1 SYNOPSIS
 
@@ -3039,8 +3577,7 @@ If you use forks for the first time as "use forks" and other loaded code uses
  File::Spec (any)
  IO::Socket (1.18)
  List::MoreUtils (0.15)
- reaper (0.03)
- Scalar::Util (1.01)
+ Scalar::Util (1.09)
  Storable (any)
  Time::HiRes (any)
 
@@ -3125,9 +3662,33 @@ subject to (i.e. systems not protected by a firewall).  It also may
 provide an additional performance boost, as there is less system overhead
 necessary to handle UNIX vs INET socket communication.
 
+=head2 Co-existance with fork-aware modules and environments
+
+For modules that actively monitor and clean up after defunct child processes
+like L<POE>, forks has added support to switch the methodology used to maintain
+thraad group state.  This feature is switched on by defining the environment
+variable C<THREADS_DAEMON_MODEL>.  An example use might be:
+
+    THREADS_DAEMON_MODEL=1 perl -Mforks -Mforks::shared -MPOE threadapplication
+
+This function essentially reverses the parent-child relationship between the
+main thread and the thread state process that forks.pm uses.  Extra care has
+gone into retaining full system signal support and compatibility when using
+this mode, so it should be quite stable.
+
 =head1 NOTES
 
-Some imporant items you should be aware of.
+Some important items you should be aware of.
+
+=head2 $thr->wantarray() returns void after $thr->join or $thr->detach
+
+Be aware that thread return context is purged and $thr->wantarray will return
+void context after a thread is detached or joined.  This is done to minimize
+memory in programs that spawn many (millions of) threads.  This differs from
+default threads.pm behavior, but should be acceptable as the context no longer
+serves a functional purpose after a join and is the same (void) after a detach.
+Thus, if you still require thread context information after a join, be sure to
+request and store the value of $thr->wantarray on the thread first.
 
 =head2 Signal behavior
 
@@ -3139,11 +3700,22 @@ platform, such as SIGKILL and SIGSTOP.  Thus, it is recommended you only use
 normal signals (such as TERM, INT, HUP, USR1, USR2) for inter-thread signal
 handling.
 
+=head2 exit() behavior
+
+If you call exit() in a thread other than the main thread and exit behavior
+is configured to cause entire application to exit (default behavior), be aware
+that all other threads will be agressively terminated using SIGKILL.  This
+will cause END blocks and global destruction to be ignored in those threads.
+
+This behavior conforms to the expected behavior of native Perl threads. The
+only subtle difference is that the main thread will be signaled using SIGABRT
+to immediately exit.
+
 =head2 Modifying signals
 
 Since the threads API provides a method to send signals between threads
 (processes), untrapped normal and error signals are defined by forks with
-a basic CORE::exit() shutdown function to provide safe termination.
+a basic exit() shutdown function to provide safe termination.
 
 Thus, if you (or any modules you use) modify signal handlers, it is important
 that the signal handlers at least remain defined and are not undefined (for
@@ -3151,26 +3723,54 @@ whatever reason).  The system signal handler default, usually abnormal
 process termination which skips END blocks, may cause undesired behavior if
 a thread exits due to an unhandled signal.
 
-=head2 
+=head2 Modules that modify %SIG or use POSIX::sigaction()
+
+To insure highest stability, forks ties some hooks into the global %SIG hash
+to co-exist as peacefully as possible with user-defined signals.  This has a 
+few subtle, but important implications:
+
+    - As long as you modify signals using %SIG, you should never encounter any
+    unexpected issues.
+
+    - If you use POSIX::sigaction, it may subvert protections that forks has
+    added to the signal handling system.  In normal circumstances, this will not
+    create any run-time issues; however, if you also attempt to access shared
+    variables in signal handlers or END blocks, you may encounter unexpected
+    results.  Note: if you do use sigaction, please avoid overloading the ABRT
+    signal in the main thread, as it is used for process group flow control.
+
+=head2 Modules that modify CORE::GLOBAL::fork()
+
+This modules goes to great lengths to insure that normal fork behavior is
+seamlessly integrated into the threaded environment by overloading
+CORE::GLOBAL::fork.  Thus, please refrain from overloading this function unless
+absolutely necessary.  In such a case, forks.pm provides a set of four functions:
+
+    _fork_pre
+    _fork
+    _fork_post_parent
+    _fork_post_child
+
+that represent all possible functional states before and after a fork occurs.
+These states must be called to insure that fork() works for both threads and
+normal fork calls.
+
+Refer to forks.pm source code, *CORE::GLOBAL::fork = sub { ... } definition
+as an example usage.  Please contact the author if you have any questions
+regarding this.
 
 =head2 Modules that modify $SIG{CHLD}
 
 In order to be compatible with perl's core system() function on all platforms,
-extra care has gone into implementing a smarter $SIG{CHLD} in forks.pm.  If any
-modules you use modify $SIG{CHLD} (or if you attempt to modify it yourself), 
-you may end up with undesired issues such as unreaped processes or a system()
-function that returns -1 instead of the correct exit value.  See L<perlipc>
-for more information regarding common issues with modifying $SIG{CHLD}.
-
-If $SIG{CHLD} has to be modified in any way by your software, please take extra
-care to implement a handler that follows the requirements of chained signal
-handlers.  See L<reaper> for more information.
+extra care has gone into implementing a smarter $SIG{CHLD} in forks.pm.  The
+only functional effect is that you will never need to (or be able to) reap
+threads (processes) if you define your own CHLD handler.
 
 You may define the environment variable THREADS_SIGCHLD_IGNORE to to force 
 forks to use 'IGNORE' on systems where a custom CHLD signal handler has been
 automatically installed to support correct exit code of perl core system()
-function.  There should be no need to use this unless you encounter specific
-issues with L<reaper> signal chaining.
+function.  Not that this should *not* be necessary unless you encounter specific
+issues with the forks.pm CHLD signal handler.
 
 =head1 CAVEATS
 
@@ -3188,7 +3788,6 @@ You may decrease some latency by using UNIX sockets (see L</"UNIX socket support
 Also, you may wish to try L<forks::BerkeleyDB>, which has shown signifigant performance
 gains and consistent throughoutput in applications requiring high-concurrency shared
 variable access.
-
 
 =head2 Module CLONE functions and threads
 
@@ -3226,13 +3825,6 @@ These problems are known and will hopefully be fixed in the future:
 
 =over 2
 
-=item inter-thread signaling is experimental and potentially unstable
-
-This feature is considered experimental and has rare synchronization issues
-when sending a signal to a process in the middle of sending or receiving
-socket data pertaining to a threads operation.  This will be addressed in a
-future release.
-
 =item test-suite exits in a weird way
 
 Although there are no errors in the test-suite, the test harness sometimes
@@ -3250,9 +3842,9 @@ And of course, there might be other, undiscovered issues.  Patches are welcome!
 
 Refer to the C<CREDITS> file included in the distribution.
 
-=head1 CURRENT MAINTAINER
+=head1 CURRENT AUTHOR AND MAINTAINER
 
-Eric Rybski <rybskej@yahoo.com>.
+Eric Rybski <rybskej@yahoo.com>.  Please send all module inquries to me.
 
 =head1 ORIGINAL AUTHOR
 
@@ -3261,7 +3853,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2007 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

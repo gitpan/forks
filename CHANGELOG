@@ -1,3 +1,105 @@
+0.24	July 9 2007
+	***** Threads API consistency changes *****
+
+	Changed $thr->wantarray return value to 0-length string (was string '0') to
+	meet standard wantarray scalar context return value.
+	
+	Added support for exit() and threads->exit() methodology and behavior.
+	
+	Added support for $thr->error() feature.
+	
+	Added a warning (and disallowing thread detach) if attempting to detach a
+	thread that another thread is currently waiting to join.
+	
+	***** Internal behavior changes *****
+	
+	Added ability to swap primary process (main<->shared) that is parent of all
+	processes in threaded application (via $ENV{THREADS_DAEMON_MODEL});
+	should help support co-existance with some fork-aware modules, like POE.
+	
+	Rewrote signal handling methodology to resolve stability issues with
+	inter-thread and external process signaling.
+	
+	Addressed the limit of 65535 shared variables: you may now create up to
+	2^31-1 (2+ billion) shared variables.  Note: shared variables are currently
+	not memory deallocated even if they go out of scope in all threads; thus,
+	it's NOT recommended to create too many (1k+) unless you have a requirement
+	to do so.  Shared var mem deallocation (when no longer referenced by any
+	thread) will be addressed in a future release.
+	
+	Improved behavior of signal() and scope-exit unlock ordinal to insure that
+	all threads, no matter what type of waiting they were performing, have an
+	equal chance to receive the signal or re-acquire the lock.  The old behavior
+	gave preference towards regular waiting events for signal, and timedwaiting
+	events waiting to reacquire the lock for unlock ordinal.
+	
+	Deprecated and removed deadlock detection 'resolve_signal' feature (as this
+	could not be supported in new forks.pm signal handling logic).
+	
+	***** Bug fixes *****
+	
+	Shared variable in push() on shared array now works.
+	
+	Eliminated slow memory leak when creating many joinable threads: the shared
+	process now reclaims all shared memory allocated for joinable threads, as
+	long as the application (periodically) joins then after they complete.
+
+	Eliminated "Performing cleanup for dead thread 0" errors when compiling
+	a script (i.e. perl -c script.pl).  This fix also eliminates double
+	"syntax OK" reports when compiling a script.
+	
+	Fixed a case where detach after thread had already completed could result
+	in incorrect thread group exit state reporting.
+	
+	Corrected a bug regarding recursive variable unlocking (was deleting
+	instead of decrementing lock count).
+	
+	Fixed a few issues in test scripts regarding mis-reported errors related to
+	older threads.pm installs or non-threaded Perl targets.
+	
+	Forks now starts correctly if called with 'require' or if forks::import
+	is skipped for any reason.
+	
+	Added additional check in server to shutdown if main thread dies in a hard
+	way (no notification to server or thread group).
+
+	Added some extra protection in thread signaling (to insure that process
+	exists before signaling it).
+	
+	Added some protection in test suite for issues with race-conditions in
+	Test::More.
+	
+	Fixed race condition in forks07.t that could cause test to report an error.
+	
+	Fixed race issue in forks04.t that could cause script to error out on
+	Perl instances with old native threads.pm libraries or no threads.pm
+	library.
+	
+
+	***** Miscellaneous changes *****
+	
+	Added additional thread environment protection regarding fork occuring
+	outside forks.pm module.  Also silenced a few warnings that might have
+	occured in such cases.
+	
+	Silenced a few more unnecessary run-time warnings in specific exception
+	and error cases.
+	
+	Rewrote END behavior for more stability and better cleanup during thread
+	(process) group exit.
+	
+	Added internal hooks to allow external modules to override default forks.pm
+	fork logic.  This should allow more flexibility to integrate forks with
+	application-scope modifying environments (i.e. mod_perl, POE, Coro, etc.).
+	
+	Removed dependency on Reaper module.
+	
+	Updated version requirement for Scalar::Util module.
+	
+	Upgraded to ppport.h 3.11.
+	
+	Fixed some XS portability issues with older versions of Perl (5.8.1 and older).
+
 0.23	8 April 2007
 	***** Test suite fixes *****
 	
@@ -258,7 +360,7 @@
 	again build forks.pm.
 
 	Fixed prototype mismatch warning when disabling cond_wait when forks
-	is used before forks::shared.
+	is not used before forks::shared.
 
 	Added patch to quietly ignore sharing an already shared variable.
 	forks::shared used to bombs out in such cases (e.g. $a:shared; share($a);).

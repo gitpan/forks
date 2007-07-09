@@ -27,6 +27,7 @@ use strict;
 use warnings;
 
 my $thr = threads->new(sub { while (1) { sleep 1; } });
+sleep 3;
 $thr->kill('TERM');
 sleep 3;
 ok(!$thr->is_running(), 'Check that thread is no longer running');

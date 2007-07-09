@@ -1,7 +1,7 @@
 README for forks
 
 Version:
- 0.23
+ 0.24
 
 The forks.pm module is a drop-in replacement for threads.pm.  It has the
 same syntax as the threads.pm module (it even takes over its namespace) but
@@ -17,7 +17,7 @@ If for nothing else, it allows you to test out the Perl threading model,
 even in older versions of Perl (5.6.0 and higher are supported)
 
 Copyright (c)
- 2005-2006 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2007 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
@@ -27,8 +27,7 @@ Required Modules:
  File::Spec (any)
  IO::Socket (1.18)
  List::MoreUtils (0.15)
- reaper (0.03)
- Scalar::Util (1.01)
+ Scalar::Util (1.09)
  Storable (any)
  Time::HiRes (any)
 

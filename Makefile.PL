@@ -103,8 +103,7 @@ WriteMakefile (
             List::MoreUtils     0.15
             File::Spec          0
             IO::Socket          1.18
-            reaper              0.03
-            Scalar::Util        1.01
+            Scalar::Util        1.09
             Storable            0
             Time::HiRes         0
                 )},

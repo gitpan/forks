@@ -18,34 +18,36 @@ BEGIN {
     eval {
         require threads; # must be done _before_ Test::More which loads real threads.pm
         require threads::shared;
-        import threads;
-        import threads::shared;
         unless ($forks::threads_override || $forks::threads_override) {
             $skip_all = 1;
             $num_tests = 1;
-			# do the following to prevent unnecessary test script errors
-			if (!defined $threads::VERSION || $threads::VERSION < 1.34) {
-				require forks;
-				require forks::shared;
-				import forks;
-				import forks::shared;
-			}
         }
     };
     if ($@) {
         $skip_all = 1;
         $num_tests = 1;
-        # do the following to prevent unnecessary test script errors
-        if (!defined $threads::VERSION || $threads::VERSION < 1.34) {
-			require forks;
-			require forks::shared;
-			import forks;
-			import forks::shared;
-		}
     }
 }
 
-use Test::More tests => $num_tests;
+# do the following to prevent unnecessary test script errors
+BEGIN {
+    if (!defined $threads::VERSION || $threads::VERSION < 1.34) {
+        package threads;
+        *all = *running = *joinable = sub {};
+        package main;
+        print <<EOUTPUT;
+1..1
+ok 1 # skip Forks will not be installed as replacement for threads.pm
+EOUTPUT
+        exit(0);
+    }
+
+    import threads;
+    import threads::shared;
+    require Test::More;
+    import Test::More tests => $num_tests;
+}
+
 use strict;
 use warnings;
 
@@ -85,7 +87,7 @@ is( system("echo"),0, 'check that CORE::system still returns correct exit values
 
 unless (my $pid = fork) {
   threads->isthread if defined($pid);
-  exit;
+  threads->can('exit') ? threads->exit : exit;
 }
 sleep 3; # make sure fork above has started to ensure tid's are in sync
 

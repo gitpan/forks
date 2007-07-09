@@ -12,7 +12,7 @@ BEGIN {
 
 BEGIN {delete $ENV{THREADS_DEBUG}} # no debugging during testing!
 
-use Test::More tests => 1;
+use Test::More tests => 4;
 use Config;
 use strict;
 use warnings;
@@ -32,10 +32,25 @@ if ($^O ne 'VMS') {
 }
 
 my $cmd = qq{$secure_perl_path $libs -e '}
-    .q|BEGIN {delete $ENV{THREADS_DEBUG}}|
+    .q|BEGIN {delete $ENV{THREADS_DEBUG}; delete $ENV{THREADS_DAEMON_MODEL};}|
     .qq{ use forks; exit($desired_exit_val);'};
+my $cmd2 = qq{$secure_perl_path $libs -e '}
+    .q|BEGIN {delete $ENV{THREADS_DEBUG}; $ENV{THREADS_DAEMON_MODEL} = 1;}|
+    .qq{ use forks; exit($desired_exit_val);'};
+my $cmd3 = qq{$secure_perl_path $libs -e '}
+    .q|BEGIN {delete $ENV{THREADS_DEBUG}; delete $ENV{THREADS_DAEMON_MODEL};}|
+    .qq{ use forks; threads->new(sub { exit($desired_exit_val);} )->join(); sleep 10; sleep 10;'};
+my $cmd4 = qq{$secure_perl_path $libs -e '}
+    .q|BEGIN {delete $ENV{THREADS_DEBUG}; $ENV{THREADS_DAEMON_MODEL} = 1;}|
+    .qq{ use forks; threads->new(sub { exit($desired_exit_val);} )->join(); sleep 10; sleep 10;'};
 
 my $exit_val = system($cmd) >> 8;
+cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
+$exit_val = system($cmd2) >> 8;
+cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
+$exit_val = system($cmd3) >> 8;
+cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
+$exit_val = system($cmd4) >> 8;
 cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
 
 1;
