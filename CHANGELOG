@@ -1,3 +1,21 @@
+0.25	August 12 2007
+	***** Bug fixes *****
+	
+	Updated internal PID tracking to U32 size for increased portability across
+	different kernels and kernel configurations.  This corrects irregular issues
+	with locks on such systems.
+	
+	Rewrote signal handling engine to be more portable and stable.  Changes
+	eliminated behavior on BSD kernels that would cause processes to improperly
+	exit with an ABRT-triggered core dump.
+
+	***** Miscellaneous changes *****
+	
+	Added some protections in test suite for non-mixed fork/thread safe
+	Test::More module.
+	
+	Added tests for new signal handling engine.
+
 0.24	July 9 2007
 	***** Threads API consistency changes *****
 

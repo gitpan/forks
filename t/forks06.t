@@ -34,38 +34,45 @@ alarm 90;	#give ourselves some time to complete these tests
 
 our $a : shared;
 our $b : shared;
+our $c : shared;
 
 sub deadlock_thread_pair {
 	my $t1 = threads->new(sub {
 		lock $a;
 		sleep 2;
 		lock $b;
+		lock $c;
 	});
 	my $t2 = threads->new(sub {
 		lock $b;
 		sleep 2;
 		lock $a;
+		lock $c;
 	});
 	return ($t1, $t2);
 }
 
 #== manually detect and resolve ====================================
-my ($thr1, $thr2) = deadlock_thread_pair();
-sleep 5;
-ok($thr1->is_deadlocked(), "Check if thread $thr1 is deadlocked");
-ok($thr2->is_deadlocked(), "Check if thread $thr2 is deadlocked");
+my ($thr1, $thr2);
+{
+	lock $c;
+	($thr1, $thr2) = deadlock_thread_pair();
+	sleep 5;
+	ok($thr1->is_deadlocked(), "Check if thread $thr1 is deadlocked");
+	ok($thr2->is_deadlocked(), "Check if thread $thr2 is deadlocked");
 
-forks::shared->import(deadlock => {resolve => 1});	#resolve the current deadlock
-sleep 3;
+	forks::shared->import(deadlock => {resolve => 1});	#resolve the current deadlock
+	sleep 3;
 
-if ($thr1->is_running()) {
-	ok($thr1->is_joinable(), "Check if thread $thr1 is joinable");
-	ok(!$thr2->is_running(), "Check if thread $thr2 was auto-killed");
-} else {
-	ok($thr2->is_joinable(), "Check if thread $thr2 is joinable");
-	ok(!$thr1->is_running(), "Check if thread $thr1 was auto-killed");
+	if ($thr1->is_running()) {
+		ok($thr1->is_running(), "Check if thread $thr1 is still running");
+		ok(!$thr2->is_running(), "Check if thread $thr2 was auto-killed");
+	} else {
+		ok($thr2->is_running(), "Check if thread $thr2 is still running");
+		ok(!$thr1->is_running(), "Check if thread $thr1 was auto-killed");
+	}
+	sleep 3;
 }
-sleep 3;
 $_->join() foreach threads->list();
 
 #== auto-detect and resolve ========================================

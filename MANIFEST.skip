@@ -5,6 +5,7 @@
 ,v$
 \B\.svn\b
 \b_darcs\b
+\.#.+\d+$
 
 # Avoid Makemaker generated and utility files.
 \bMANIFEST\.bak
@@ -25,6 +26,7 @@
 \#$
 \b\.#
 \.bak$
+\.orig$
 
 # Avoid Devel::Cover files.
 \bcover_db\b

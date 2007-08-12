@@ -3,7 +3,8 @@
 optimizations:
 - implement more methods using custom filters (to reduce Storable usage)
 - support alternate, faster locking mechanisms (filesystem and/or SysV shmem)
-- allow for shared memory as transport medium (how will we fix blocking?)
+- allow for shared memory as transport medium
+	- one alternative is to use BerkeleyDB, e.g. forks::BerkeleyDB
 
 join() needs to be able to propagate (die) errors to threads.  Currently, it
 only return undef in error cases.
@@ -79,3 +80,7 @@ prevent this from happening, if possible, to replicate threads.pm behavior.
 
 Add recursive lock tests with cond_* (to test that recursive locks are
 correctly acquired and released).
+
+Figure out how to suppress SIGIOT warnings on certain plaforms (Solaris):
+"Caught a SIGIOT at
+/usr/local/lib/perl5/site_perl/5.8.7/sun4-solaris-64/forks/signals.pm line 59"

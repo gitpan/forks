@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.24';
+$VERSION = '0.25';
 
 package
     threads; # but in fact we're masquerading as threads.pm
@@ -246,6 +246,9 @@ my $SHUTDOWN = 0;
 # Initialize the flag that indicates that we're still running
 # Initialize value that stores the desired application exit value
 # Initialize the number of bytes to read at a time
+# List of signals that forks intelligently monitors and traps to insure inter-thread signal stability
+# Initialize hash (key: sig name) of base not-defined signal behavior to use with forks::signals
+# Initialize hash (key: sig name) of base defined signal behavior to use with forks::signals
 # Pseudo-signal mask indicating signals to handle when thread finished current server message handling
 # Initialize flag that indicates whether thread is send data with shared process
 # Initialize flag that indicates whether thread is recv data with shared process
@@ -262,6 +265,9 @@ my $SHUTDOWN = 0;
 my $RUNNING = 1;
 my $EXIT_VALUE;
 my $BUFSIZ  = BUFSIZ;
+my @TRAPPED_SIGNAL = qw(HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP);
+my %THR_UNDEFINED_SIG = map { $_ => \&_sigtrap_handler_undefined } @TRAPPED_SIGNAL;
+my %THR_DEFINED_SIG = map { $_ => \&_sigtrap_handler_defined } @TRAPPED_SIGNAL;
 my @DEFERRED_SIGNAL;
 $threads::SEND_IN_PROGRESS = 0;
 $threads::RECV_IN_PROGRESS = 0;
@@ -1108,36 +1114,26 @@ _log( " ! global startup" ) if DEBUG;
 # Default main thread initializaton handler
 
 sub _init_main {
-
-# Store snapshot of user-installed signal handlers
-# Reset all signal handlers to default
-# Enable custom ABRT signal handler, for main thread control
-# Enable custom CHLD signal handler,
-# Configure signal handlers
-# Make this thread 0
-# Overload %SIG for safest forks-aware signal behavior
-# Restore user-installed signal handlers
-
     my $is_parent = shift;
 
-    my %oldsig = %SIG;
-    delete( @SIG{keys %SIG} );
-    import sigtrap ('handler', \&_sigtrap_handler_undefined,
-        qw(normal-signals USR1 USR2 error-signals));
-    my %defined_sigs = map { $_ => \&_sigtrap_handler_defined }
-        map(defined $SIG{$_} && $SIG{$_} ne '' ? $_ : (), keys %SIG);
-    $SIG{ABRT} = \&_sigtrap_handler_main_abrt;
-    $SIG{CHLD} = $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER;
-    $defined_sigs{ABRT} = $SIG{ABRT};
-    $defined_sigs{CHLD} = $SIG{CHLD};
+# Use forks::signal to overload %SIG for safest forks-aware signal behavior
 
-    _init_thread();
+    import forks::signals
+        ifndef => {
+            %THR_UNDEFINED_SIG,
+            ABRT => \&_sigtrap_handler_main_abrt,
+            CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER
+        },
+        ifdef => {
+            %THR_DEFINED_SIG,
+            ABRT => \&_sigtrap_handler_main_abrt,
+            CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER
+        },
 
-    import forks::signals ifdef => \%defined_sigs;
-    $SIG{$_} = $oldsig{$_} foreach map(defined $_ ? $_ : (), keys %oldsig);
-
+# Make this thread 0
 # Overload global exit to conform to ithreads API.
 
+    _init_thread();
     {
         no warnings 'redefine';
         *CORE::GLOBAL::exit = *CORE::GLOBAL::exit = sub {
@@ -1151,6 +1147,7 @@ sub _init_main {
 # Default thread server initializaton handler
 
 sub _init_server {
+    my $is_parent = shift;
 
 # Reset all signal handlers to default
 # If is parent
@@ -1158,7 +1155,6 @@ sub _init_server {
 #  Configure child signal handler
 # Start handling requests as the server
 
-    my $is_parent = shift;
     delete( @SIG{keys %SIG} );
     if ($is_parent) {
         import sigtrap ('handler', \&_sigtrap_handler_shared,
@@ -1923,11 +1919,17 @@ sub _init_thread {
     _run_CLONE() if $TID;
     
 # Wait for result of registration, die if failed
-# Clear ABRT signal handler, if appropriate
+# If this is not main thread
+#  Use forks::signal to overload %SIG for safest forks-aware signal behavior
 
     _croak( "Could not register pid $$ as tid $TID" ) unless _receive( $QUERY );
-    delete( $SIG{ABRT} )
-        if $TID > 0 && defined($SIG{ABRT}) && $SIG{ABRT} eq \&_sigtrap_handler_main_abrt;
+    if ($TID > 0) {
+        import forks::signals
+            ifndef => { %THR_UNDEFINED_SIG, CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER },
+            ifdef => { %THR_DEFINED_SIG, CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER };
+    }
+
+    return 1;
 } #_init_thread
 
 #---------------------------------------------------------------------------
@@ -3392,7 +3394,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.24.
+This documentation describes version 0.25.
 
 =head1 SYNOPSIS
 
@@ -3722,6 +3724,11 @@ that the signal handlers at least remain defined and are not undefined (for
 whatever reason).  The system signal handler default, usually abnormal
 process termination which skips END blocks, may cause undesired behavior if
 a thread exits due to an unhandled signal.
+
+In general, the following signals are considered "safe" to trap and use in
+threads (depending on your system behavior when such signals are trapped):
+
+    HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP
 
 =head2 Modules that modify %SIG or use POSIX::sigaction()
 

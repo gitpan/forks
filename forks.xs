@@ -15,7 +15,7 @@ START_MY_CXT
 
 void
 exec_leave(pTHX_ SV *both) {
-    U16 process;
+    U32 process;
     U32 ordinal;
     AV *av_ord_lock;
 
@@ -24,7 +24,7 @@ exec_leave(pTHX_ SV *both) {
     SAVETMPS;
 
     av_ord_lock = (AV*)SvRV(both);
-    process = (U16)SvUV((SV*)*av_fetch(av_ord_lock, 1, 0));
+    process = (U32)SvUV((SV*)*av_fetch(av_ord_lock, 1, 0));
     ordinal = (U32)SvUV((SV*)*av_fetch(av_ord_lock, 2, 0));
   /*  printf ("unlock: ordinal = %d, process = %d\n",ordinal,process); */
     SvREFCNT_dec(av_ord_lock);
@@ -113,7 +113,7 @@ lock(SV *myref)
     PROTOTYPE: \[$@%]
     PPCODE:
         int count;
-        U16 process;
+        U32 process;
         U32 ordinal;
         AV *av_ord_lock;
 
