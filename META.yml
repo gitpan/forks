@@ -1,10 +1,11 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         forks
-version:      0.25
-version_from: lib/forks.pm
-installdirs:  site
-requires:
+--- #YAML:1.0
+name:                forks
+version:             0.26
+abstract:            forks - emulate threads with fork
+license:             ~
+generated_by:        ExtUtils::MakeMaker version 6.36
+distribution_type:   module
+requires:     
     Devel::Required:               0.07
     File::Spec:                    0
     IO::Socket:                    1.18
@@ -12,6 +13,8 @@ requires:
     Scalar::Util:                  1.09
     Storable:                      0
     Time::HiRes:                   0
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.17
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.2.html
+    version: 1.2
+author:
+    - Eric Rybski (rybskej@yahoo.com)

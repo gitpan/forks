@@ -23,6 +23,10 @@ file descriptors (for additional security control).
 
 ***** Issues to Address *****
 
+Environment variables should be shared among all threads (ithreads behavior).
+
+Current working directory should be shared among all threads (ithreads behavior).
+
 Memory is currently not reclaimed for shared variables that are no longer
 referenced by any thread.
 
@@ -54,10 +58,14 @@ Need to look into why some signals very rarely are not handled by threads
 (i.e. SIGTERM should cause thread to exit--but thread appears to have ignored
 signal.  Is this a side effect of Perl's safe signal handling mechanism?).
 The thread does appear to actually get the signal, but sometimes it doesn't
-seem to completely exit.  Problem last seen in forks 0.23.
+seem to completely exit.  Problem last seen in forks 0.23, but not seen since
+forks 0.25, so may be resolved.
 
 
 ***** Miscellaneous Items *****
+
+May need to switch to using Sys::SigAction instead of SIG for more consistent
+signal behavior across different Perl versions.
 
 Move source filter from forks.pm to forks::shared.pm, although I doubt that
 there will be many cases where forks would only be used.
@@ -75,8 +83,10 @@ DBI is the only known module that may need a CLONE patch, and this is only to
 suppress annoying warning for resources that are closed (or is this something
 that actually needs to be fixed in DBI?)
 
-Signals sent to main thread tend to propagate to all threads.  We need to
+Signals sent to main thread can propagate to all threads.  We need to
 prevent this from happening, if possible, to replicate threads.pm behavior.
+This may be due to signal being sent to a process group (so it may not be
+blockable).
 
 Add recursive lock tests with cond_* (to test that recursive locks are
 correctly acquired and released).
@@ -84,3 +94,53 @@ correctly acquired and released).
 Figure out how to suppress SIGIOT warnings on certain plaforms (Solaris):
 "Caught a SIGIOT at
 /usr/local/lib/perl5/site_perl/5.8.7/sun4-solaris-64/forks/signals.pm line 59"
+
+
+Add documentation explaining that forks installs a SIGCHLD handler by default,
+and that system calls in your user code may be interrupted by this handler
+at any time (threads exiting), depending on the system call and if your kernel
+auto-continues the system call after handling the signal.
+
+NOTE: There still appears to be an issue with the last value of $! not being
+cleared and EINTR still being returned on the next accept() vall.  Setting $!
+to undef before calling the system call appears to clear the issue.  This is
+system behavior outside of forks module that needs more research to resolve.
+
+A few suggestions if this is an issue:
+
+1. Check if $! == POSIX::EINTR() if your system call returns undef.  If so,
+manually re-enter into (call again) the system call, like:
+
+       while((my $conn = $server->accept) || $! == EINTR) {
+          next if $! == EINTR;
+          ...
+       }
+
+This is the most portable solution.
+
+2. Localize $SIG{CHLD} = 'IGNORE' when performing your interruptible
+(non-reentrant) system call.  For example:
+
+       my $conn;
+       my $loop = 1;
+       while($loop) {
+          {
+              local $SIG{CHLD} = 'IGNORE';
+              $conn = $server->accept;
+              next if $! == EINTR;
+              last unless $conn;
+          }
+          ...
+       }
+
+This is a more verbose but acceptable solution.
+
+   
+3. Set $SIG{CHLD} = 'IGNORE' after loading the forks module.
+
+This is the simplest solution as it applies globally to all system calls, but be
+warned that this may cause the exit value of your script to be ignored
+(returns -1) depending on your kernel behavior.  You can always check your kernel
+behavior by executing the following at a shell command line:
+
+    perl -e '$SIG{CHLD} = "IGNORE"; exit(42);'; echo "Expected 42. Got $?"

@@ -1,5 +1,9 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.25';
+$VERSION = '0.26';
+
+# Allow external modules to defer shared variable init at require
+
+$DEFER_INIT_BEGIN_REQUIRE = 0 unless $DEFER_INIT_BEGIN_REQUIRE;
 
 package
     threads; # but in fact we're masquerading as threads.pm
@@ -10,7 +14,7 @@ package
 # Flag whether or not module is loaded in namespace override mode (e.g. threads.pm)
 # Be strict from now on
 
-$VERSION = '1.63';
+$VERSION = '1.67';
 $threads        = $threads        = 1; # twice to avoid warnings
 $forks::threads = $forks::threads = 1; # twice to avoid warnings
 $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
@@ -212,7 +216,8 @@ use IO::Select ();
 use POSIX      qw(WNOHANG
     BUFSIZ O_NONBLOCK F_GETFL F_SETFL
     SIG_BLOCK SIG_UNBLOCK SIGCHLD SIGKILL
-    ECONNABORTED ECONNRESET EAGAIN EINTR EWOULDBLOCK);
+    ECONNABORTED ECONNRESET EAGAIN EINTR EWOULDBLOCK
+    WIFEXITED WIFSIGNALED);
 use Storable   ();
 use Time::HiRes qw(sleep time);
 use List::MoreUtils;
@@ -265,7 +270,13 @@ my $SHUTDOWN = 0;
 my $RUNNING = 1;
 my $EXIT_VALUE;
 my $BUFSIZ  = BUFSIZ;
-my @TRAPPED_SIGNAL = qw(HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP);
+my @TRAPPED_SIGNAL;
+BEGIN {
+    foreach my $signal (qw(HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP)) {
+        push @TRAPPED_SIGNAL, $signal if grep(/^$signal$/,
+            split(/\s+/, $Config::Config{sig_name}));
+    }
+}
 my %THR_UNDEFINED_SIG = map { $_ => \&_sigtrap_handler_undefined } @TRAPPED_SIGNAL;
 my %THR_DEFINED_SIG = map { $_ => \&_sigtrap_handler_defined } @TRAPPED_SIGNAL;
 my @DEFERRED_SIGNAL;
@@ -458,7 +469,7 @@ use overload
 # Initialize thread server at runtime, in case import was skipped
 
 *create = \&new; create() if 0; # to avoid warning
-_init();
+_init() unless $forks::DEFER_INIT_BEGIN_REQUIRE;
 
 # Functions to allow external modules an API hook to specific runtime states
 # These may be used to build a new CORE::GLOBAL::fork state
@@ -926,7 +937,7 @@ sub REAPER {
     local $!; local $?;
     foreach my $pid (keys %CHILD_PID) {
         my $waitpid = waitpid($pid, WNOHANG);
-        if (defined($waitpid) && $waitpid == $pid) {
+        if (defined($waitpid) && $waitpid == $pid && (WIFEXITED($?) || WIFSIGNALED($?))) {
             delete( $CHILD_PID{$pid} );
             if ($$ == $PID_MAIN_THREAD) {
                 CORE::exit() if $waitpid == $SHARED && !$MAIN_EXIT_WITH_ABRT;
@@ -947,7 +958,7 @@ sub REAPER_SHARED_DAEMON {
 
     local $!; local $?;
     while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
-        if ($pid == $PID_MAIN_THREAD) {
+        if ($pid == $PID_MAIN_THREAD && (WIFEXITED($?) || WIFSIGNALED($?))) {
             $EXIT_VALUE = ($? >> 8) & 0xFF unless defined($EXIT_VALUE);
             $RUNNING = 0;
         }
@@ -3394,7 +3405,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.25.
+This documentation describes version 0.26.
 
 =head1 SYNOPSIS
 

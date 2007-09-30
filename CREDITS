@@ -13,6 +13,10 @@ Erwan Velu
  For finding that system() might not return correct exit value on
  certain target platforms.
  
+Nilson Santos Figueiredo Junior <nilsonsfj@cpan.org>
+ For helping identify a problem with locks and large PIDs, and
+ for helping test and refine general BSD kernel compatibility.
+
 Richard Faasen
  For discovering that some XS code was incompatible with older
  gcc versions.

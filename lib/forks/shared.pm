@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.25';
+$VERSION = '0.26';
 
 use Config ();
 
@@ -34,7 +34,7 @@ package
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '1.12';
+$VERSION  = '1.14';
 $threads_shared = $threads_shared = 1;
 use strict;
 use warnings;
