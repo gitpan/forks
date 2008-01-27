@@ -67,8 +67,8 @@ forks 0.25, so may be resolved.
 May need to switch to using Sys::SigAction instead of SIG for more consistent
 signal behavior across different Perl versions.
 
-Move source filter from forks.pm to forks::shared.pm, although I doubt that
-there will be many cases where forks would only be used.
+Enable custom concurrent alarm/ALRM behavior to support optimized locking mechanisms;
+specifically, SysV semaphores, filesystem, or other possibilities.
 
 Add additional tests to rigorously test tied handle (for shared var) behavior.
 Test delete with single, hash slice, and array slice elements.

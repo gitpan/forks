@@ -3,6 +3,7 @@ CREDITS
 forks.xs
 lib/forks.pm
 lib/forks/shared.pm
+lib/forks/shared/attributes.pm
 lib/forks/signals.pm
 lib/threads/shared/array.pm
 lib/threads/shared/handle.pm

@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.26';
+$VERSION = '0.27';
 
 # Allow external modules to defer shared variable init at require
 
@@ -32,6 +32,18 @@ BEGIN {
     }
 } #BEGIN
 
+# Fake that threads.pm was really loaded, before loading any other modules
+
+BEGIN {
+    if (defined $INC{'forks.pm'}) {
+        $INC{'threads.pm'} ||= $INC{'forks.pm'};
+    } elsif (defined $INC{'threads.pm'} && $forks::threads_override) {
+        $INC{'forks.pm'} ||= $INC{'threads.pm'}
+    } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
+        die( "Can not mix 'use forks' with real 'use threads'" )
+    }
+}
+
 # Load signal handler libraries
 
 BEGIN {
@@ -61,48 +73,6 @@ use constant joinable => 0;
 
 use constant EXIT_THREAD_ONLY => 'thread_only';
 use constant EXIT_THREADS_ONLY => 'threads_only';
-
-#---------------------------------------------------------------------------
-# If we're running in a perl before 5.8.0, we need a source filter to change
-# all occurrences of
-#
-#  share( $x );
-#
-# to:
-#
-#  share( \$x );
-#
-# The same applies for lock(), cond_wait(), cond_timedwait(), cond_signal() and cond_broadcast().
-#
-# We do this by conditionally adding the source filter functionality if we're
-# running in a versione before 5.8.0.
-
-my $filtering; # are we filtering source code?
-BEGIN {
-    eval <<'EOD' if ($filtering = $] < 5.008); # need string eval ;-(
-
-use Filter::Util::Call; # get the source filter stuff
-
-#---------------------------------------------------------------------------
-#  IN: 1 object (not used)
-# OUT: 1 status
-
-sub filter {
-
-# Initialize status
-# If there are still lines to read
-#  Convert the line if there is any mention of our special subs
-# Return the status
-
-    my $status;
-    if (($status = filter_read()) > 0) {
-#warn $_ if         # activate if we want to see changed lines
-        s#(\b(?:cond_broadcast|cond_wait|cond_timedwait|cond_signal|share|lock)\b\s*(?!{)\(?\s*)(?=[mo\$\@\%])#$1\\#sg;
-    }
-    $status;
-} #filter
-EOD
-} #BEGIN
 
 #---------------------------------------------------------------------------
 # Modify Perl's Config.pm to simulate that it was built with ithreads
@@ -272,14 +242,14 @@ my $EXIT_VALUE;
 my $BUFSIZ  = BUFSIZ;
 my @TRAPPED_SIGNAL;
 BEGIN {
-    foreach my $signal (qw(HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP)) {
+    foreach my $signal (qw(HUP INT PIPE TERM USR1 USR2 ABRT EMT QUIT TRAP)) {
         push @TRAPPED_SIGNAL, $signal if grep(/^$signal$/,
             split(/\s+/, $Config::Config{sig_name}));
     }
 }
 my %THR_UNDEFINED_SIG = map { $_ => \&_sigtrap_handler_undefined } @TRAPPED_SIGNAL;
 my %THR_DEFINED_SIG = map { $_ => \&_sigtrap_handler_defined } @TRAPPED_SIGNAL;
-my @DEFERRED_SIGNAL;
+my @DEFERRED_SIGNAL = ();
 $threads::SEND_IN_PROGRESS = 0;
 $threads::RECV_IN_PROGRESS = 0;
 $threads::RECV_DATA = '';
@@ -988,13 +958,16 @@ sub _sigtrap_handler_defined {
 
 # Obtain the signal sent
 # If valid signal and this is a valid thread
-#  Defer the signal if not main thread and currently not exchanging with server
+#  If not main thread and currently not exchanging with server
+#   Add signal to deferred list unless it is already in the list
+#   Return immediately with false (void) value
+# Return with true value
 
     my ($sig) = @_;
     if ($sig && exists($ISATHREAD{$$}) && defined($PID) && $$ == $PID) {
         if ($threads::SEND_IN_PROGRESS
                 || ($threads::RECV_IN_PROGRESS && length($threads::RECV_DATA) > 0)) {
-            push @DEFERRED_SIGNAL, $sig;
+            push @DEFERRED_SIGNAL, $sig unless grep(/^$sig$/, @DEFERRED_SIGNAL);
             return;
         }
     }
@@ -1003,7 +976,7 @@ sub _sigtrap_handler_defined {
 
 sub _sigtrap_handler_undefined {
 
-# Call defined thread sig handler routine
+# Call defined thread sig handler routine (to handle deferred signal logic, if required)
 # If valid signal and this is a valid thread (not main thread)
 #  Print a general warning
 # Mark this thread as shutting down (for quiet exit)
@@ -1038,16 +1011,8 @@ sub _sigtrap_handler_shared {
 sub _init {
 
 # Return if module already initialized
-# Fake that threads.pm was really loaded (this is the first time we're here)
 
     return if $HANDLED_INIT;
-    if (defined $INC{'forks.pm'}) {
-        $INC{'threads.pm'} ||= $INC{'forks.pm'};
-    } elsif (defined $INC{'threads.pm'} && $forks::threads_override) {
-        $INC{'forks.pm'} ||= $INC{'threads.pm'}
-    } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
-        _croak( "Can not mix 'use forks' with real 'use threads'" )
-    }
 
 _log( " ! global startup" ) if DEBUG;
 
@@ -1121,6 +1086,11 @@ _log( " ! global startup" ) if DEBUG;
     $HANDLED_INIT = 1;
 } #_init
 
+my $old_core_global_exit;
+BEGIN {
+    $old_core_global_exit = \&CORE::GLOBAL::exit;
+}
+
 #---------------------------------------------------------------------------
 # Default main thread initializaton handler
 
@@ -1129,6 +1099,15 @@ sub _init_main {
 
 # Use forks::signal to overload %SIG for safest forks-aware signal behavior
 
+# TODO: consider this case as a less-invasive signal handling system, for
+#       cases where users wish to have fully overloadable signals via %SIG
+#    foreach (@TRAPPED_SIGNAL) {
+#        import sigtrap 'handler', (defined($SIG{$_})
+#            ? \&_sigtrap_handler_defined
+#            : \&_sigtrap_handler_undefined), $_;
+#    }
+#    import sigtrap ('handler', \&_sigtrap_handler_main_abrt, 'ABRT');
+#    import sigtrap ('handler', ($FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER), 'CHLD');
     import forks::signals
         ifndef => {
             %THR_UNDEFINED_SIG,
@@ -1139,7 +1118,7 @@ sub _init_main {
             %THR_DEFINED_SIG,
             ABRT => \&_sigtrap_handler_main_abrt,
             CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER
-        },
+        };
 
 # Make this thread 0
 # Overload global exit to conform to ithreads API.
@@ -1147,7 +1126,7 @@ sub _init_main {
     _init_thread();
     {
         no warnings 'redefine';
-        *CORE::GLOBAL::exit = *CORE::GLOBAL::exit = sub {
+        *CORE::GLOBAL::exit = sub {
             threads::_command( '_toexit',$_[0] );
             defined $_[0] ? CORE::exit($_[0]) : CORE::exit();
         };
@@ -1182,10 +1161,8 @@ sub _init_server {
 sub import {
 
 # Obtain the class
-# Add filter if we're filtering
 
     my $self = shift;
-    filter_add( bless {},$self ) if $filtering;
 
 # Overload string context of thread object to return TID, if requested
 
@@ -1245,6 +1222,7 @@ sub _END {
 #  Allow external modules opportunity to clean up thread process group resources
 # If this process is a valid thread (including main thread if $THREADS_INTEGRATED_MODEL)
 #  Mark this thread as shutting down
+#  Reset CORE::GLOBAL::exit to default
 #  Indicate that this process has been shut down to the server (if appropriate)
 #  Mark this thread as shut down (so we won't send or receive anymore)
 #  If this is main thread using non-daemon model
@@ -1298,6 +1276,10 @@ sub _END {
             _end_server_post_shutdown();
         } elsif (exists( $ISATHREAD{$$} ) && defined($PID) && $$ == $PID && ($THREADS_INTEGRATED_MODEL || $TID)) {
             $SHUTTING_DOWN_END = 1;
+            {
+                no warnings 'redefine';
+                *CORE::GLOBAL::exit = $old_core_global_exit if defined $old_core_global_exit;
+            }
             _command( '_shutdown',$TID )
                 if CORE::kill(0, $SHARED) && ($TID > 0 || !$MAIN_ABRT_HANDLED);
             $SHUTDOWN = 1;
@@ -2131,7 +2113,6 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
 #    Warn and exit immediately (server connection terminated, likely due to main thread shutdown)
 #   Die now unless shuttind down and not in debug mode
 #   Return immediately
-# Handle deferred signals, if any occured
 
     $frozen =~ m#^(.*)$#s;
     my ($data, $total_sent) = ($1, 0);
@@ -2161,7 +2142,12 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
             }
         }
     }
-    $SIG{$_}->($_) while (shift @DEFERRED_SIGNAL);
+
+# Handle deferred signals
+# Reset deferred signal list
+
+	$SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
+    @DEFERRED_SIGNAL = ();
 } #_send
 
 #---------------------------------------------------------------------------
@@ -2194,7 +2180,6 @@ sub _receive {
 #   Set up for next attempt to fetch
 #  ElseIf call would block or was interrupted by signal
 #   Sleep a bit (to not take all CPU time)
-# Handle deferred signals, if any occured
 
         while ($todo > 0) {
             local $threads::RECV_DATA = '';
@@ -2216,7 +2201,12 @@ _log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
             }
         }
     }
-    $SIG{$_}->($_) while (shift @DEFERRED_SIGNAL);
+
+# Handle deferred signals
+# Reset deferred signal list
+
+	$SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
+    @DEFERRED_SIGNAL = ();
 
 # Unless we're shutting down and we're not running in debug mode
 #  Die now (we didn't get the data)
@@ -3405,11 +3395,11 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.26.
+This documentation describes version 0.27.
 
 =head1 SYNOPSIS
 
-  use forks;
+  use forks;    #ALWAYS LOAD AS FIRST MODULE, if possible
   use warnings;
 
   my $thread = threads->new( sub {       # or ->create or async()
@@ -3491,6 +3481,16 @@ sense to use this module on a Windows system.  And therefore, a check is
 made during installation barring you from installing on a Windows system.
 
 =back
+
+=head2 module load order: forks first
+
+Since forks overrides core Perl functions, you are *strongly* encouraged to
+load the forks module before any other Perl modules.  This will insure the
+most consistent and stable system behavior.  This can be easily done without
+affecting existing code, like the following examples:
+
+    perl -Mforks  script.pl
+    perl -Mforks -Mforks::shared  script.pl
 
 =head2 memory usage
 
@@ -3586,6 +3586,7 @@ If you use forks for the first time as "use forks" and other loaded code uses
 
 =head1 REQUIRED MODULES
 
+ Attribute::Handlers (any)
  Devel::Required (0.07)
  File::Spec (any)
  IO::Socket (1.18)
@@ -3739,7 +3740,7 @@ a thread exits due to an unhandled signal.
 In general, the following signals are considered "safe" to trap and use in
 threads (depending on your system behavior when such signals are trapped):
 
-    HUP INT PIPE TERM USR1 USR2 ABRT BUS EMT FPE ILL QUIT SEGV SYS TRAP
+    HUP INT PIPE TERM USR1 USR2 ABRT EMT QUIT TRAP
 
 =head2 Modules that modify %SIG or use POSIX::sigaction()
 

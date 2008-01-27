@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.26';
+$VERSION = '0.27';
 
 use Config ();
 
@@ -39,6 +39,26 @@ $threads_shared = $threads_shared = 1;
 use strict;
 use warnings;
 
+# At compile time
+#  If forks is running in shadow mode
+#   Fake that forks::shared.pm was really loaded (if not set already)
+#  Elsif there seems to be a threads.pm loaded
+#   Fake that threads::shared.pm was really loaded (if not set already)
+#  Elsif there are (real) threads loaded
+#   Die now indicating we can't mix them
+#  Else (using forks::shared without either forks.pm or threads.pm)
+#   Die (we'll handle this maybe later)
+
+BEGIN {
+    if (defined $INC{'threads.pm'} && $forks::threads_override) {
+        $INC{'forks/shared.pm'} ||= $INC{'threads/shared.pm'}
+    } elsif (defined $INC{'forks.pm'}) {
+        $INC{'threads/shared.pm'} ||= $INC{'forks/shared.pm'};
+    } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
+        die( "Can not mix 'use forks::shared' with real 'use threads'\n" );
+    }
+}
+
 # Make sure we can die with lots of information
 # Make sure we can find out about blessed references correctly
 # Load some additional list utility functions
@@ -51,16 +71,25 @@ use List::MoreUtils;
 #  Make sure we have a local copy of the base command handler on the client side
 # Else
 #  Have share do nothing, just return the ref
-#  Disable the cond_xxxx family
+#  If we're running a perl older than 5.008
+#   Disable the cond_xxxx family with no prototypes
+#  Else
+#   Disable the cond_xxxx family
 
 if ($forks::threads || $forks::threads) { # twice to avoid warnings
     *_command = \&threads::_command;
     *is_shared = \&_id;
 } else {
     *share = \&share_disabled;
-    *is_shared = *lock = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
-    *cond_wait = sub (\[$@%];\[$@%]) {undef};
-    *cond_timedwait = sub (\[$@%]$;\[$@%]) {undef};
+    if ($] < 5.007003) {
+        *is_shared = *lock = *cond_signal = *cond_broadcast = sub {undef};
+        *cond_wait = sub {undef};
+        *cond_timedwait = sub {undef};
+    } else {
+        *is_shared = *lock = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
+        *cond_wait = sub (\[$@%];\[$@%]) {undef};
+        *cond_timedwait = sub (\[$@%]$;\[$@%]) {undef};
+    }
 }
 
 # Avoid warnings
@@ -80,35 +109,77 @@ our $CLONE = 0;
 our %LOCKED;
 
 # Do this at compile time
-#  Allow for dirty stuff in here
-#  For the three types for which we support : shared
-#   Create the name of the subroutine in question
-#   Get the reference of the current version
+#  Localize $WARNINGS to silence Attributes::Shared when overloading ATTR 'shared'
+#  Load forks::shared attributes
 
 BEGIN {
-    no strict 'refs';
-    foreach my $type (qw(SCALAR ARRAY HASH)) {
-        my $name = "UNIVERSAL::MODIFY_${type}_ATTRIBUTES";
-        my $old = \&$name;
+    local $^W = 0;
+    require forks::shared::attributes;
+} #BEGIN
 
-#   Put our own handler in there
-#    Obtain the parameters in a way we can work with
-#    Share whatever reference was specified (if shared attribute found)
+#---------------------------------------------------------------------------
+# If we're running in a perl before 5.8.0, we need a source filter to change
+# all occurrences of
+#
+#  share( $x );
+#
+# to:
+#
+#  share( \$x );
+#
+# The same applies for lock(), cond_wait(), cond_timedwait(), cond_signal() and cond_broadcast().
+#
+# We do this by conditionally adding the source filter functionality if we're
+# running in a versione before 5.8.0.
+#---------------------------------------------------------------------------
+# If we're running in a perl 5.9.0 or later, we need a source filter to change
+# all occurrences of
+#
+#  [my|our] [VAR | (VAR1, VAR2, ...])] : shared
+#
+# to:
+#
+#  [my|our] [VAR | (VAR1, VAR2, ...])] : Forks_shared
+#
+# We do this by conditionally adding the source filter functionality if we're
+# running in a version 5.9.0 or later.  It is not clear whether this issue is
+# deliberate behavior of these perl version to prevent reserved attribute names
+# from being manipulated; however, it prevents Attribute::Handlers from being
+# able to handle 'shared' attributes.
 
-        *$name = sub {
-            my ($package,$ref,@attribute) = @_;
-            _share( $ref ) if grep m#^shared$#, @attribute;
+my $filtering; # are we filtering source code?
+BEGIN {
+    eval <<'EOD' if ($filtering = ( $] < 5.008 || $] >= 5.009 )); # need string eval ;-(
 
-#     If there are other attributes to handle still
-#      Call the original routine with the remaining attributes
-#     Return the remaining attributes
+use Filter::Util::Call (); # get the source filter stuff
 
-            if (@attribute = grep !m#^shared$#,@attribute) {
-                @attribute = $old->( $package,$ref,@attribute );
-            }
-            @attribute;
-        } #$name
+#---------------------------------------------------------------------------
+#  IN: 1 object (not used)
+# OUT: 1 status
+
+sub filter {
+
+# Initialize status
+# If there are still lines to read
+#  If this is perl < 5.008
+#   Convert the line if there is any mention of our special subs
+#  Else if this is perl >= 5.009
+#   Convert the line if there is any mention of our attribute
+# Return the status
+
+    my $status;
+    if (($status = Filter::Util::Call::filter_read()) > 0) {
+        if ($] < 5.008) {
+#warn $_ if         # activate if we want to see changed lines
+            s#(\b(?:cond_broadcast|cond_wait|cond_timedwait|cond_signal|share|lock)\b\s*(?!{)\(?\s*)(?=[mo\$\@\%])#$1\\#sg;
+        } elsif ($] >= 5.009) {
+#warn $_ if         # activate if we want to see changed lines
+            s#((?:my|our)((?:\s|\()*[\$@%*]\w+(?:\s|\)|,)*)+\:\s*)\bshared\b#$1Forks_shared#sg;
+        }
     }
+    $status;
+} #filter
+EOD
 } #BEGIN
 
 # Satisfy require
@@ -126,26 +197,10 @@ BEGIN {
 sub import {
 
 # Lose the class
+# Add filter if we're filtering
+
     my $class = shift;
-
-# If we forks is running in shadow mode
-#  Fake that forks::shared.pm was really loaded (if not set already)
-# Elsif there seems to be a threads.pm loaded
-#  Fake that threads::shared.pm was really loaded (if not set already)
-# Elsif there are (real) threads loaded
-#  Die now indicating we can't mix them
-# Else (using forks::shared without either forks.pm or threads.pm)
-#  Die (we'll handle this maybe later)
-
-    if (defined $INC{'threads.pm'} && $forks::threads_override) {
-        $INC{'forks/shared.pm'} ||= $INC{'threads/shared.pm'}
-    } elsif (defined $INC{'forks.pm'}) {
-        $INC{'threads/shared.pm'} ||= $INC{'forks/shared.pm'};
-    } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
-        _croak( "Can not mix 'use forks::shared' with real 'use threads'\n" );
-    } else {
-        _croak( "Must first 'use forks'\n" ); #for now
-    }
+    Filter::Util::Call::filter_add( CORE::bless {},$class ) if $filtering;
 
 # Enable deadlock options, if requested
     
@@ -734,9 +789,20 @@ Additionally, array splice function will become a no-op with a warning.
 
 =head1 CAVIATS
 
-These problems are known and will be fixed in the future:
+Some caveats that you need to be aware of.
 
 =over 2
+
+=head2 Source filter
+
+To get C<forks::shared> working on Perl 5.9.0 or later, it was necessary to
+use a source filter to overload and correctly implement the 'shared' Perl
+variable attribute.  A change introduced in 5.9.0 that prevents access to
+previously accessible attribute internals created the need for this
+(temporary) solution.
+
+The source filter used is syntactically correct, but may prove to be too simple.
+Please report any problems that you may find when running under 5.9.0 or later.
 
 =item test-suite exits in a weird way
 

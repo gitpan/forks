@@ -1,3 +1,41 @@
+0.27	January 27 2007
+	***** Bug fixes *****
+	
+	forks::shared now supports perl 5.9.0 and later (with a source filter).  The
+	requirement for a source filter is hopefully just a temporary solution until
+	Attribute::Handlers can access the 'shared' attribute again (which perl 5.9
+	and later currently prevent, perhaps because they consider it a reserved word).
+	
+	Corrected perl 5.6 support, regarding incompatible XS function Perl prototypes
+	(broken since 0.16).
+	
+	All internal %INC manipulation is now done at compilation (require) time.  This
+	corrects cases where modules that 'use threads::shared' before forks::shared has
+	been loaded actually load ithreads-native threads::shared.
+
+	Corrected bug regarding handling forks-server operation deferred signals (which
+	was preventing them from being executed when they should be executed).
+	
+	***** Miscellaneous changes *****
+	
+	Forks now uses Perl core module Attribute::Handlers for 'shared' variable
+	attribute handling.  This also insures compatibility with any other modules
+	that may use Attribute::Handlers.
+	
+	Removed BUS, FPE, ILL, SEGV, and SYS from list of "forks-aware" signal handlers
+	for better cross-platform portability.
+	
+	Added POD strongly encouraging use of forks and forks::shared as FIRST modules.
+
+	Now tracking last known CORE::GLOBAL::exit at require time, and resetting at
+	END.  This should insure that cases where forks wasn't first module to be loaded
+	allows for other modules to still use their own custom exit methods.
+	
+	Moved 5.6.x source filter from forks.pm to forks::shared.pm, where it belongs.
+	
+	Added appropriate disabled functions (without prototypes) for perl 5.6.x when
+	forks::shared is disabled if was loaded without loading forks first).
+
 0.26	September 30 2007
 	***** Bug fixes *****
 	

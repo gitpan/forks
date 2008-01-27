@@ -1,11 +1,12 @@
 --- #YAML:1.0
 name:                forks
-version:             0.26
+version:             0.27
 abstract:            forks - emulate threads with fork
 license:             ~
 generated_by:        ExtUtils::MakeMaker version 6.36
 distribution_type:   module
 requires:     
+    Attribute::Handlers:           0
     Devel::Required:               0.07
     File::Spec:                    0
     IO::Socket:                    1.18

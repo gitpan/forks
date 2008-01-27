@@ -9,14 +9,27 @@ use strict;
 use ExtUtils::MakeMaker 6.10;
 eval "use Devel::Required";
 
+### Perl version-specific code modifications and modified requirements ###
 my $old = 'forks.xs';
 my $new = "$old.new";;
-my $from = qq{#    PROTOTYPE: \\[\$\@\%]\n};
-my $to   = qq{    PROTOTYPE: \\[\$\@\%]\n};
+my @from = (
+    qq{#    PROTOTYPE: \\[\$\@\%]\n},
+    qq{#    PROTOTYPE: \\[\$\@\%];\\[\$\@\%]\n},
+    qq{#    PROTOTYPE: \\[\$\@\%]\$;\\[\$\@\%]\n}
+);
+my @to = (
+    qq{    PROTOTYPE: \\[\$\@\%]\n},
+    qq{    PROTOTYPE: \\[\$\@\%];\\[\$\@\%]\n},
+    qq{    PROTOTYPE: \\[\$\@\%]\$;\\[\$\@\%]\n}
+);
 
 my @extra_prereq;
-if ($] < 5.008) { # no prototypes before 5.8.0, we need to filter also
-    ($from,$to) = ($to,$from);
+if ($] < 5.008) { # no complex prototypes before 5.8.0, we need to filter also
+    my @from_tmp = @from;
+    @from = @to;
+    @to = @from_tmp;
+    push @extra_prereq,qw(Filter::Util::Call 0);
+} elsif ($] >= 5.009) { # 5.9.0 and later requires filter to support 'shared' variable attribute
     push @extra_prereq,qw(Filter::Util::Call 0);
 }
 
@@ -25,7 +38,15 @@ open my $in,'<',$old   or die "Could not open $old: $!\n";;
 open my $out,'>',$new  or die "Could not create $new: $!\n";;
 
 while (<$in>) {
-    print $out $_ eq $from ? $to : $_;
+    my $filtered = 0;
+    for (my $i = 0; $i < scalar @from; $i++) {
+        if ($_ eq $from[$i]) {
+            print $out $to[$i];
+            $filtered = 1;
+            last;
+        }
+    }
+    print $out $_ unless $filtered;
 }
 
 close $out        or die "Could not close $new: $!\n";
@@ -35,6 +56,7 @@ unlink $old       or die "Could not remove $old\n";
 rename $new,$old  or die "Could not rename $new to $old\n";
 chmod 0444, $old  or die "Could not change permissions on $old\n";
 
+### Determine whether ithreads simulated feature may be used ###
 use Config ();
 my $simulate_useithreads = 0;
 unless ($Config::Config{useithreads}) {
@@ -57,7 +79,6 @@ unless ($Config::Config{useithreads}) {
     }
 }
 
-
 if ($simulate_useithreads) {
 #    eval {
 #package MY; # so that "SUPER" works right
@@ -74,7 +95,7 @@ if ($simulate_useithreads) {
 #    };
     
 #    eval {
-require ExtUtils::MM_Any; #kludge: MY::all_target doesn't work (as of 6.17)
+require ExtUtils::MM_Any; #kludge: MY::all_target doesn't work (as of MakeMaker 6.17)
 require ExtUtils::MM_Unix;
 *ExtUtils::MM_Any::__all_target = \&ExtUtils::MM_Any::all_target;
 *ExtUtils::MM_Unix::__all_target = \&ExtUtils::MM_Unix::all_target;
@@ -91,6 +112,7 @@ require ExtUtils::MM_Unix;
     };
 }
 
+### Standard MakeMaker Makefile.PL directives ###
 package main;
 WriteMakefile (
  NAME       => "forks",
@@ -99,6 +121,7 @@ WriteMakefile (
  VERSION_FROM   => 'lib/forks.pm',
 
  PREREQ_PM  => {@extra_prereq,qw(
+            Attribute::Handlers 0
             Devel::Required     0.07
             List::MoreUtils     0.15
             File::Spec          0
