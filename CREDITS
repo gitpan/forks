@@ -20,6 +20,10 @@ Nilson Santos Figueiredo Junior <nilsonsfj@cpan.org>
 Richard Faasen
  For discovering that some XS code was incompatible with older
  gcc versions.
+ 
+threads::shared
+ For some of the XS code used for forks::shared exported bless function,
+ and for some code used for exported shared_clone function.
 
 
 ORIGINAL AUTHOR CREDITS

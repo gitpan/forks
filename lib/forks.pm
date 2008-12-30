@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.27';
+$VERSION = '0.28';
 
 # Allow external modules to defer shared variable init at require
 
@@ -14,12 +14,36 @@ package
 # Flag whether or not module is loaded in namespace override mode (e.g. threads.pm)
 # Be strict from now on
 
-$VERSION = '1.67';
-$threads        = $threads        = 1; # twice to avoid warnings
-$forks::threads = $forks::threads = 1; # twice to avoid warnings
-$forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
+BEGIN {
+    $VERSION = '1.71';
+    $threads        = $threads        = 1; # twice to avoid warnings
+    $forks::threads = $forks::threads = 1; # twice to avoid warnings
+    $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
+}
+
+# Standard forks behavior (extra features), or emulate threads to-the-letter
+
+BEGIN {
+    if ($forks::threads_override) {
+        $forks::threads_native_emulation = 1;
+    } elsif (exists $ENV{'THREADS_NATIVE_EMULATION'}) {
+        $ENV{'THREADS_NATIVE_EMULATION'} =~ m#^(.*)$#s;
+        $forks::threads_native_emulation = $1 ? 1 : 0;
+    } else {
+        $forks::threads_native_emulation = 0;
+    }
+    *forks::THREADS_NATIVE_EMULATION = sub { $forks::threads_native_emulation };
+}
+
+# Use strict pragma
+# Use warnings pragma
+# Register 'threads' namespace with warnings (if not already present)
+# Make sure we can die with lots of information
+
 use strict;
 use warnings;
+use warnings::register;
+use Carp ();
 
 #---------------------------------------------------------------------------
 # Set when to execute end block
@@ -28,20 +52,26 @@ BEGIN {
     if ($^C) {
         eval "CHECK { _CHECK() }";
     } else {
-        eval "END { _END() }";
+        $] < 5.008 ? eval "END { eval{_END()} }" : eval "END { _END() }";
     }
 } #BEGIN
 
 # Fake that threads.pm was really loaded, before loading any other modules
 
 BEGIN {
+    my $module = 'forks';
     if (defined $INC{'forks.pm'}) {
         $INC{'threads.pm'} ||= $INC{'forks.pm'};
     } elsif (defined $INC{'threads.pm'} && $forks::threads_override) {
+        $module = 'threads';
         $INC{'forks.pm'} ||= $INC{'threads.pm'}
     } elsif (defined $INC{'threads.pm'} && !$forks::threads_override) {
         die( "Can not mix 'use forks' with real 'use threads'" )
     }
+
+    $module = 'threads' if eval{forks::THREADS_NATIVE_EMULATION()};
+    Carp::carp "Warning, $module\::shared has already been loaded"
+        if defined $INC{'forks/shared.pm'};
 }
 
 # Load signal handler libraries
@@ -112,6 +142,10 @@ BEGIN {
 #   Enable integrated threads (server process child of main thread)
 #  Else
 #   Enable normal threads (server process parent of main thread)
+#  If there is a PERL5_ITHREADS_STACK_SIZE specification
+#   Set this as the new default size
+#  Else
+#   Set to the system default size (0 == use system default)
 
 my $DEBUG;
 my $SERVER_NICE;
@@ -119,6 +153,7 @@ my $FORCE_SIGCHLD_IGNORE;
 my $THREADS_UNIX;
 my $INET_IP_MASK;
 my $THREADS_INTEGRATED_MODEL;
+my $ITHREADS_STACK_SIZE;
 
 BEGIN {
     if (exists $ENV{'THREADS_DEBUG'}) {
@@ -164,6 +199,13 @@ BEGIN {
     } else {
         $THREADS_INTEGRATED_MODEL = 1;
     }
+
+    if (exists $ENV{'PERL5_ITHREADS_STACK_SIZE'}) {
+        $ENV{'PERL5_ITHREADS_STACK_SIZE'} =~ m#^(\d+)$#s;
+        $ITHREADS_STACK_SIZE = $1;
+    } else {
+        $ITHREADS_STACK_SIZE = 0;
+    }
 } #BEGIN
 
 # Load the XS stuff
@@ -171,7 +213,6 @@ BEGIN {
 require XSLoader;
 XSLoader::load( 'forks',$forks::VERSION );
 
-# Make sure we can die with lots of information
 # Make sure we can do sockets and have the appropriate constants
 # Make sure we can do select() on multiple sockets
 # Make sure we have the necessary POSIX constants
@@ -179,17 +220,17 @@ XSLoader::load( 'forks',$forks::VERSION );
 # Allow for chainable child reaping functions
 # Enable hi-res time
 
-use Carp       ();
 use Socket     qw(SOMAXCONN);
 use IO::Socket ();
 use IO::Select ();
 use POSIX      qw(WNOHANG
     BUFSIZ O_NONBLOCK F_GETFL F_SETFL
     SIG_BLOCK SIG_UNBLOCK SIGCHLD SIGKILL
-    ECONNABORTED ECONNRESET EAGAIN EINTR EWOULDBLOCK
+    ECONNABORTED ECONNRESET EAGAIN EINTR EWOULDBLOCK ETIMEDOUT
+    SA_RESTART SA_NOCLDSTOP
     WIFEXITED WIFSIGNALED);
 use Storable   ();
-use Time::HiRes qw(sleep time);
+use Time::HiRes qw(time);
 use List::MoreUtils;
 
 # Flag whether or not forks has initialized the server process
@@ -236,6 +277,7 @@ my $SHUTDOWN = 0;
 # Initialize the pid of the thread
 # Return context of thread (possible values are same as those of CORE::wantarray)
 # Initialize hash (key: module) with code references of CLONE subroutines
+# Initialize hash (key: module) with code references of CLONE_SKIP subroutines
 
 my $RUNNING = 1;
 my $EXIT_VALUE;
@@ -261,6 +303,7 @@ my $TID;
 my $PID;
 my $THREAD_CONTEXT;
 my %CLONE;
+my %CLONE_SKIP;
 
 # Initialize the next thread ID to be issued
 # Initialize hash (key: tid) with the thread id to client object translation
@@ -269,6 +312,7 @@ my %CLONE;
 # Initialize hash (key: pid) with the process id to thread id translation
 # Initialize hash (key: ppid) with the parent pid to child tid queue (value: array ref)
 # Initialize hash (key: tid) with the thread id to thread join context translation
+# Initialize hash (key: tid) with the thread id to thread stack size translation
 
 my $NEXTTID = 0;
 my %TID2CLIENT;
@@ -277,6 +321,7 @@ my %TID2PID;
 my %PID2TID;
 my %PPID2CTID_QUEUE;
 my %TID2CONTEXT;
+my %TID2STACKSIZE;
 
 # Initialize flag with global thread exit method (1=thread; 0=check %THREAD_EXIT)
 # Initialize hash (key: tid) with threads that should threads->exit() on exit()
@@ -373,23 +418,21 @@ my @cmd_num_to_filter;
 my @cmd_num_to_type;
 my %cmd_type_to_num;
 BEGIN {
-    use constant {
-        CMD_FLTR_REQ    => 0,
-        CMD_FLTR_RESP   => 1,
-        CMD_FLTR_ENCODE => 0,
-        CMD_FLTR_DECODE => 1,
+    use constant CMD_FLTR_REQ    => 0;
+    use constant CMD_FLTR_RESP   => 1;
+    use constant CMD_FLTR_ENCODE => 0;
+    use constant CMD_FLTR_DECODE => 1;
 
-        CMD_TYPE_DEFAULT    => 0,   #entire content is frozen
-        CMD_TYPE_INTERNAL   => 1,   #msg has a custom filter
+    use constant CMD_TYPE_DEFAULT    => 0;   #entire content is frozen
+    use constant CMD_TYPE_INTERNAL   => 1;   #msg has a custom filter
 
-        MSG_LENGTH_LEN                  => 4,
-        CMD_TYPE_IDX                    => 0,
-        CMD_TYPE_LEN                    => 1,
-        CMT_TYPE_FROZEN_CONTENT_IDX     => 1,
-        CMD_TYPE_INTERNAL_SUBNAME_IDX   => 1,
-        CMD_TYPE_INTERNAL_SUBNAME_LEN   => 2,
-        CMD_TYPE_INTERNAL_CONTENT_IDX   => 3,
-    };
+    use constant MSG_LENGTH_LEN                  => 4;
+    use constant CMD_TYPE_IDX                    => 0;
+    use constant CMD_TYPE_LEN                    => 1;
+    use constant CMT_TYPE_FROZEN_CONTENT_IDX     => 1;
+    use constant CMD_TYPE_INTERNAL_SUBNAME_IDX   => 1;
+    use constant CMD_TYPE_INTERNAL_SUBNAME_LEN   => 2;
+    use constant CMD_TYPE_INTERNAL_CONTENT_IDX   => 3;
     %cmd_filter = (  #pack: 1 arrayref input param; unpack: 1 scalar input param; pack/unpack: list output
         __boolean   => [    #client-to-server
             [   #request
@@ -455,14 +498,36 @@ _init() unless $forks::DEFER_INIT_BEGIN_REQUIRE;
 #  when building a new CORE::GLOBAL::fork state.
 #  See forks.pm CORE::GLOBAL::fork definition as an example.
 
-sub _fork_pre {}
-sub _fork { return CORE::fork; }
-sub _fork_post_parent {}
+# Block all process signals when forking, to insure most stable behavior.
+my $_fork_block_sigset;
+BEGIN {
+    $_fork_block_sigset = POSIX::SigSet->new();
+    $_fork_block_sigset->fillset();
+}
+
+sub _fork_pre {
+
+# Block all signals during fork to prevent interruption
+
+    POSIX::sigprocmask(SIG_BLOCK, $_fork_block_sigset);
+} #_fork_pre
+sub _fork { return CORE::fork; } #_fork
+sub _fork_post_parent {
+
+# Restore signals blocked during fork
+
+    POSIX::sigprocmask(SIG_UNBLOCK, $_fork_block_sigset);
+} #_fork_post_parent
 sub _fork_post_child {
+
+# Restore signals blocked during fork
+# Reset some important state variables
+
+    POSIX::sigprocmask(SIG_UNBLOCK, $_fork_block_sigset);
     delete $ISATHREAD{$$};
     undef( $TID );
     undef( $PID );
-}
+} #_fork_post_child
 
 # Overload global fork for best protection against external fork.
 
@@ -487,6 +552,96 @@ BEGIN {
     };
 } #BEGIN
 
+# Overload global, Time::HiRes sleep functions to reduce CHLD signal side-effects
+# Define flag toggled when REAPER has been called but user hasn't defined handler
+
+our $IFNDEF_REAPER_CALLED = 0;
+BEGIN {
+    no warnings 'redefine';
+
+# Store Time::HiRes sleep function for internal use
+
+    my $sleep = *sleep = *sleep = \&Time::HiRes::sleep;
+    *CORE::GLOBAL::sleep = *CORE::GLOBAL::sleep
+        = sub (;@) {
+
+# Get requested sleep time
+# Initialize a few variables
+# Localize signal indicator for use only for this system call
+# While sleep time hasn't yet been exhausted
+#  Calculate remaining sleep time
+#  Reset signal indicator
+#  Sleep and store total time slept
+#  Exit loop if sleep exited for some reason other than a CHLD signal
+# Return total time slept
+
+        my $s = shift;
+        my $t = 0;
+        my $f = 0;
+        my $sig;
+        local $IFNDEF_REAPER_CALLED;
+        while ($s - $t > 0) {
+            $s -= $t;
+            $IFNDEF_REAPER_CALLED = 0;
+            $f += $t = CORE::sleep $s;
+            last unless $IFNDEF_REAPER_CALLED;
+        }
+        return $f; 
+    };
+
+# Generate same function wrapper for Time::HiRes sleep, usleep, and nanosleep
+
+    *Time::HiRes::sleep = *Time::HiRes::sleep
+        = sub (;@) {
+        my $s = shift;
+        my $t = 0;
+        my $f = 0;
+        my $sig;
+        local $IFNDEF_REAPER_CALLED;
+        while ($s - $t > 0) {
+            $s -= $t;
+            $IFNDEF_REAPER_CALLED = 0;
+            $f += $t = $sleep->($s);
+            last unless $IFNDEF_REAPER_CALLED;
+        }
+        return $f; 
+    };
+
+    my $usleep = \&Time::HiRes::usleep;
+    *Time::HiRes::usleep = *Time::HiRes::usleep
+        = sub ($) {
+        my $s = shift;
+        my $t = 0;
+        my $f = 0;
+        my $sig;
+        local $IFNDEF_REAPER_CALLED;
+        while ($s - $t > 0) {
+            $s -= $t;
+            $IFNDEF_REAPER_CALLED = 0;
+            $f += $t = $usleep->($s);
+            last unless $IFNDEF_REAPER_CALLED;
+        }
+        return $f; 
+    };
+
+    my $nanosleep = \&Time::HiRes::nanosleep;
+    *Time::HiRes::nanosleep = *Time::HiRes::nanosleep
+        = sub ($) {
+        my $s = shift;
+        my $t = 0;
+        my $f = 0;
+        my $sig;
+        local $IFNDEF_REAPER_CALLED;
+        while ($s - $t > 0) {
+            $s -= $t;
+            $IFNDEF_REAPER_CALLED = 0;
+            $f += $t = $nanosleep->($s);
+            last unless $IFNDEF_REAPER_CALLED;
+        }
+        return $f; 
+    };
+} #BEGIN
+
 # Satisfy -require-
 
 1;
@@ -506,10 +661,11 @@ sub new {
 # Obtain the class
 # Obtain the subroutine reference
 # Initialize some local vars
+# Parse stack_size of this object (if new called with object reference)
 # If sub is a hash ref
 #  Assume thread-specific params were defined
 #  Obtain the actual subroutine
-#  Parse stack_size -- not supported (yet)
+#  Parse stack_size
 #  Parse thread context (presidence given to param over implicit context)
 #  Parse thread exit behavior
 # Else
@@ -517,13 +673,20 @@ sub new {
     my $class = shift;
     my $sub = shift;
     my ($param, $stack_size, $thread_context, $thread_exit);
+    if (ref($class) && defined( my $size = $class->get_stack_size )) {
+        $stack_size = $size;
+    }
     if (ref($sub) eq 'HASH') {
         $param = $sub;
         $sub = shift;
-#        if (exists $param->{'stack_size'}) {}
-
-        if ((exists $param->{'context'} && $param->{'context'} eq 'list')
-            || (exists $param->{'list'} && $param->{'list'}))
+        if (exists $param->{'stack_size'} && defined $param->{'stack_size'}) {
+            $stack_size = $param->{'stack_size'};
+        }
+        if (exists $param->{'stack'} && defined $param->{'stack'}) {
+            $stack_size = $param->{'stack'};
+        }
+        if ((exists $param->{'context'} && $param->{'context'} =~ m/^list|array$/o)
+            || (exists $param->{'list'} && $param->{'list'} || (exists $param->{'array'} && $param->{'array'})))
         {
             $thread_context = 1;
         } elsif ((exists $param->{'context'} && $param->{'context'} eq 'scalar')
@@ -559,12 +722,14 @@ sub new {
     }
 
 # Initialize the process id of the thread
+# Get results of _run_CLONE_SKIP
 # If it seems we're in the child process
 #  If the fork failed
 #   Print a detailed warning
 #   Return undefined to indicate the failure
 
     my $pid;
+    my $clone_skip = _run_CLONE_SKIP();
     unless ($pid = fork) {
         unless (defined( $pid )) {
             warnings::warnif("Thread creation failed: Could not fork child from pid $$, tid $TID: ".($! ? $! : ''));
@@ -585,7 +750,7 @@ sub new {
 #  Save the result
 #  And exit the process
 
-        _init_thread($thread_context);
+        _init_thread($clone_skip, $thread_context, undef, $stack_size);
         if (defined($thread_exit) && $thread_exit eq EXIT_THREAD_ONLY) {
             threads->set_thread_exit_only(1);
         } elsif (defined($thread_exit) && $thread_exit eq EXIT_THREADS_ONLY) {
@@ -628,11 +793,11 @@ sub isthread {
 
 # Die now if this process is already marked as a thread
 # Set up stuff so this process is now a detached thread
-# Mark this thread as a detached thread
+# Mark this thread as a detached thread (and run clone skip, even though we're not in parent)
 
     _croak( "Process $$ already registered as a thread" )
      if exists( $ISATHREAD{$$} );
-    _init_thread( undef, 1 );
+    _init_thread( _run_CLONE_SKIP(), undef, 1 );
 } #isthread
 
 #---------------------------------------------------------------------------
@@ -671,13 +836,14 @@ sub self { shift->_object( $TID,$$ ) } #self
 sub object {
 
 # Obtain the parameters
-# If there is a defined thread id
+# If there is a defined thread id (and tid is not main thread)
 #  Obtain the associated process id
 #  Return blessed object if we actually got a process id
 # Indicate we couldn't make an object
 
     my ($class,$tid) = @_;
-    if (defined($tid)) {
+    if (defined($tid) && $tid != 0) {
+        return if $tid == 0;
         my $pid = _command( '_tid2pid',$tid );
         return $class->_object( $tid,$pid ) if defined( $pid );
     }
@@ -738,16 +904,22 @@ sub _handle {
 #---------------------------------------------------------------------------
 #  IN: 1 class or instantiated object
 # OUT: the thread (process) stack size
-# Sorry, we can't do get_stack_size() with forks (yet)
 
-sub get_stack_size { return 0; } #get_stack_size
+sub get_stack_size {
+
+# Obtain the class or object
+# Return the current size
+
+    my $self = shift;
+    return _command( '_get_set_stack_size',ref($self) ? $self->tid : undef );
+} #get_stack_size
 
 #---------------------------------------------------------------------------
-#  IN: 1 class
-# OUT: the thread (process) stack size
-# Sorry, we can't do set_stack_size() with forks (yet)
+#  IN: 1 class or instantiated object
+#      2 new default stack size
+# OUT: the old default thread (process) stack size
 
-sub set_stack_size { return 0; } #set_stack_size
+sub set_stack_size { shift; return _command( '_get_set_stack_size',undef,shift() ) } #set_stack_size
 
 #---------------------------------------------------------------------------
 #  IN: 1 class
@@ -790,13 +962,31 @@ sub wantarray {
 #  IN: 1 instantiated object
 # OUT: 1..N results of the indicated thread
 
-sub detach { _command( '_detach',shift->tid ) ? 1 : _croak('Thread already detached') } #detach
+sub detach {
+
+# Obrain the result
+# Die if an error occured
+# Otherwise, return true
+
+    my ($success, $errtxt) = _command( '_detach',shift->tid );
+    Carp::croak($errtxt) unless $success;
+    return 1;
+} #detach
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 # OUT: 1..N results of the indicated thread
 
-sub join { _command( '_join',shift->tid ) } #join
+sub join {
+
+# Obrain the result
+# Die if an error occured
+# Otherwise, return joined result (returned by joined thread) in appropriate context
+
+    my ($success, @result) = _command( '_join',shift->tid );
+    Carp::croak(@result) unless $success;
+    return defined CORE::wantarray ? CORE::wantarray ? @result : $result[-1] : ();
+} #join
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -901,11 +1091,13 @@ sub async (&;@) {
 sub REAPER {
 
 # Localize system error and status variables
+# Toggle flag indicating that reaper was called, if user hasn't defined a CHLD handler
 # For just child thread processes, loop and reap
 #  If we are main thread, exit if shared process exited and main thread running
 
     local $!; local $?;
-    foreach my $pid (keys %CHILD_PID) {
+    $IFNDEF_REAPER_CALLED = 1 unless forks::signals->is_sig_user_defined('CHLD');
+    while (my $pid = each %CHILD_PID) {
         my $waitpid = waitpid($pid, WNOHANG);
         if (defined($waitpid) && $waitpid == $pid && (WIFEXITED($?) || WIFSIGNALED($?))) {
             delete( $CHILD_PID{$pid} );
@@ -1092,7 +1284,7 @@ BEGIN {
 }
 
 #---------------------------------------------------------------------------
-# Default main thread initializaton handler
+# Default main thread initialization handler
 
 sub _init_main {
     my $is_parent = shift;
@@ -1112,7 +1304,7 @@ sub _init_main {
         ifndef => {
             %THR_UNDEFINED_SIG,
             ABRT => \&_sigtrap_handler_main_abrt,
-            CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER
+            CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : [\&REAPER, SA_NOCLDSTOP | SA_RESTART]
         },
         ifdef => {
             %THR_DEFINED_SIG,
@@ -1123,7 +1315,7 @@ sub _init_main {
 # Make this thread 0
 # Overload global exit to conform to ithreads API.
 
-    _init_thread();
+    _init_thread(_run_CLONE_SKIP());
     {
         no warnings 'redefine';
         *CORE::GLOBAL::exit = sub {
@@ -1187,7 +1379,15 @@ sub import {
             threads->set_thread_exit_only(1);
         }
     }
-    
+
+# Set thread stack size, if requested
+
+    if ((my $idx = List::MoreUtils::firstidx(
+        sub { $_ eq 'stack_size' }, @_)) >= 0) {
+        my @args = splice(@_, $idx, 2);
+        _command( '_get_set_stack_size',undef,$ITHREADS_STACK_SIZE || $args[1] );
+    }
+
 # Perform the export needed
 
     _export( scalar(caller()),@_ );        
@@ -1599,6 +1799,7 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
             delete( $TID2CLIENT{$tid} );
             delete( $CLIENT2TID{$client} );
             delete( $PID2TID{$pid} ) if defined $pid;
+            delete( $TID2STACKSIZE{$tid} );
             delete( $TID2PID{$tid} )
                if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
             delete( $TID2CONTEXT{$tid} )
@@ -1676,8 +1877,9 @@ sub _handle_timedwaiting {
     foreach (@TIMEDWAITING_IDX) {
         my (undef, $ordinal, $time, undef, $id) = @{$_};
         if ($time <= time() && defined $TIMEDWAITING{$ordinal} && ref($TIMEDWAITING{$ordinal}) eq 'ARRAY' && @{$TIMEDWAITING{$ordinal}}) {
-            for (my $i = 0; $i < scalar @{$TIMEDWAITING{$ordinal}}; $i++) {
-                if ($TIMEDWAITING{$ordinal}->[$i]->[4] == $id) {
+            my @tw_events = @{$TIMEDWAITING{$ordinal}};
+            for (my $i = 0; $i < scalar @tw_events; $i++) {
+                if ($tw_events[$i]->[4] == $id) {
                     my ($tid, $l_ordinal) = @{splice(@{$TIMEDWAITING{$ordinal}}, $i, 1)}[0,3];
                     delete $TIMEDWAITING{$ordinal} unless @{$TIMEDWAITING{$ordinal}};
                     $TIMEDWAITING_IDX_EXPIRED = 1;
@@ -1870,15 +2072,19 @@ sub _export {
 
 sub _init_thread {
 
+# Get results of _run_CLONE_SKIP from parent
 # Get return context of thread
 # Get flag whether this thread should start detached or not
+# Get stack size for this thread
 # Mark this process as a thread
 # Reset thread local tid value (so the process doesn't have its parent's tid)
 # Reset thread local pid value (so the process doesn't have its parent's pid)
 # Store the return context of this thread
 
+	my $clone_skip = shift;
     my $thread_context = shift;
     my $is_detached = shift;
+    my $stack_size = shift;
     $ISATHREAD{$$} = undef;
     undef( $TID );
     undef( $PID );
@@ -1908,8 +2114,8 @@ sub _init_thread {
     _croak( "Received '$param[0]' unexpectedly" ) if $param[0] ne '_set_tid';
     $TID = $param[1];
     $PID = $$;
-    _send( $QUERY,'_register_pid',$TID,$$,$is_detached || !$TID ? undef : getppid(),$thread_context,$is_detached );
-    _run_CLONE() if $TID;
+    _send( $QUERY,'_register_pid',$TID,$$,($is_detached || !$TID ? undef : getppid()),$thread_context,$is_detached,$stack_size );
+    _run_CLONE($clone_skip) if $TID;
     
 # Wait for result of registration, die if failed
 # If this is not main thread
@@ -1918,9 +2124,19 @@ sub _init_thread {
     _croak( "Could not register pid $$ as tid $TID" ) unless _receive( $QUERY );
     if ($TID > 0) {
         import forks::signals
-            ifndef => { %THR_UNDEFINED_SIG, CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER },
-            ifdef => { %THR_DEFINED_SIG, CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER };
+            ifndef => {
+                %THR_UNDEFINED_SIG,
+                CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : [\&REAPER, SA_NOCLDSTOP | SA_RESTART]
+            },
+            ifdef => {
+                %THR_DEFINED_SIG,
+                CHLD => $FORCE_SIGCHLD_IGNORE ? 'IGNORE' : \&REAPER
+            };
     }
+
+# Reinitialize random number generator (as we're simulating new interpreter creation)
+
+    srand;
 
     return 1;
 } #_init_thread
@@ -2146,7 +2362,7 @@ _log( "> ".CORE::join(' ',map {$_ || ''} eval {_unpack_request( substr($frozen,M
 # Handle deferred signals
 # Reset deferred signal list
 
-	$SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
+    $SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
     @DEFERRED_SIGNAL = ();
 } #_send
 
@@ -2205,7 +2421,7 @@ _log( "< @{[map {$_ || ''} @result]}" ) if DEBUG;
 # Handle deferred signals
 # Reset deferred signal list
 
-	$SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
+    $SIG{$_}->($_) foreach (@DEFERRED_SIGNAL);
     @DEFERRED_SIGNAL = ();
 
 # Unless we're shutting down and we're not running in debug mode
@@ -2296,13 +2512,14 @@ sub _register_pid {
 #     Store the return context of the thread
 #    Set status to indicate success
 
-    my ($client,$tid,$pid,$ppid,$thread_context,$detach) = @_;
+    my ($client,$tid,$pid,$ppid,$thread_context,$detach,$stack_size) = @_;
     my $status = 0;
     if ($pid) {
         if (defined $TID2CLIENT{$tid}) {
             unless (exists $PID2TID{$pid}) {
                 $TID2PID{$tid} = $pid;
                 $PID2TID{$pid} = $tid;
+                $TID2STACKSIZE{$tid} = defined $stack_size ? $stack_size : $ITHREADS_STACK_SIZE;
                 push @{$PPID2CTID_QUEUE{$ppid}}, $tid if $ppid;
                 if ($detach) {
                     $DETACHED .= ",$tid";
@@ -2366,11 +2583,12 @@ sub _list_tid_pid {
 #  Obtain the thread id
 #  If user specified an argument to list()
 #   If argument was a "true" value
-#    Reloop if it is detached or joined or no longer running (non-detached)
+#    (running) Reloop if it is detached or joined or no longer running (non-detached)
+#    or a thread is already blocking to join it
 #   Else
-#    Reloop if it is detached or joined or still running (non-detached)
+#    (joinable) Reloop if it is detached or joined or still running (non-detached)
 #  Else
-#   Reloop if it is detached or joined
+#   (all) Reloop if it is detached or joined or a thread is already blocking to join it
 #  Add this tid and pid to the list
 # Store the response
 
@@ -2380,13 +2598,14 @@ sub _list_tid_pid {
         if (@_) {
             if ($_[0]) {
                 next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
-                    or exists( $RESULT{$tid} );
+                    or exists( $RESULT{$tid} ) or exists( $BLOCKING_JOIN{$tid} );
             } else {
                 next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
                     or !exists( $RESULT{$tid} );
             }
         } else {
-            next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
+            next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
+            	or exists( $BLOCKING_JOIN{$tid} );
         }
         push( @param,$tid,$pid );
     }
@@ -2481,7 +2700,7 @@ sub _tojoin {
     $ERROR{$CLIENT2TID{$client}} = $error if defined $error;
     if (my $tid = $CLIENT2TID{$client}) {
         if (exists $BLOCKING_JOIN{$tid}) {
-#warn "*** the result I got was ".scalar(@_).": ".CORE::join(',', @_);  #TODO: for debugging only
+#warn "case 1: the result I got was ".scalar(@_).": ".CORE::join(',', @_);  #TODO: for debugging only
             _isjoined( $BLOCKING_JOIN{$tid},$tid,@_ );
         } elsif ($DETACHED !~ m/\b$tid\b/) {
             $RESULT{$tid} = \@_;
@@ -2502,8 +2721,7 @@ sub _detach {
 # Obtain the parameters
 # Set flag whether first time detached
 # If another thread is already waiting to join this thread
-#  Don't allow thread to become deached
-#  Warn about this issue (should become local thread error)
+#  Don't allow thread to become deached (return local thread exception)
 # Else
 #  Detach this thread
 #  If target thread is still running
@@ -2513,12 +2731,14 @@ sub _detach {
 # Let the client know the result
 
     my ($client,$tid) = @_;
-    my $detached = $DETACHED !~ m/\b$tid\b/;
-    if (exists $BLOCKING_JOIN{$tid}) {
-        $detached = 0; #TODO: must become client error: die "Attempt to detach a thread already pending join by another thread"
-        warn "Thread $CLIENT2TID{$client} attempted to detach a thread ($tid) pending join by another thread ($CLIENT2TID{$BLOCKING_JOIN{$tid}})";
+    my $can_detach = $DETACHED !~ m/\b$tid\b/;
+    my $errtxt = $can_detach ? '' : 'Thread already detached';
+    if (exists $BLOCKING_JOIN{$tid} || ($can_detach && !exists( $NOTJOINED{$tid} ))) {
+        $can_detach = 0;
+        $errtxt = 'Cannot detach a joined thread';
+#warn "Thread $CLIENT2TID{$client} attempted to detach a thread ($tid) pending join by another thread ($CLIENT2TID{$BLOCKING_JOIN{$tid}})"; #TODO: debugging
     }
-    if ($detached) {
+    if ($can_detach) {
         $DETACHED .= ",$tid";
         if (defined $NOTJOINED{$tid}) {
             $DETACHED_NOTDONE{$tid} = undef;
@@ -2527,7 +2747,7 @@ sub _detach {
         }
         delete( $TID2CONTEXT{$tid} );
     }
-    $WRITE{$client} = _pack_response( [$detached] );
+    $WRITE{$client} = _pack_response( [$can_detach, $errtxt] );
 } #_detach
 
 #---------------------------------------------------------------------------
@@ -2561,28 +2781,32 @@ sub _join {
 #  Return undef to thread
 # Elseif someone is already waiting to join this thread
 #  Propagate error to thread
+# Elseif thread is attempting to join on itself
+#  Propagate error to thread
 # Else
 #  Start waiting for the result to arrive
 
     my ($client,$tid) = @_;
     if ($DETACHED =~ m/\b$tid\b/) {
-        warn "Thread $CLIENT2TID{$client} attempted to join a detached thread: $tid";
-        $WRITE{$client} = $undef; #TODO: must become client error: die "Cannot join a detached thread"
+#warn "Thread $CLIENT2TID{$client} attempted to join a detached thread: $tid";  #TODO: for debugging only
+        $WRITE{$client} = _pack_response( [0, 'Cannot join a detached thread'] );
     } elsif (exists $RESULT{$tid}) {
 #warn "case 2: $CLIENT2TID{$client} joining $tid immediately";  #TODO: for debugging only
         _isjoined( $client,$tid,@{$RESULT{$tid}} );
     } elsif (!exists( $NOTJOINED{$tid} )) {
-        warn "Thread $CLIENT2TID{$client} attempted to join an already joined thread: $tid";
-        $WRITE{$client} = $undef; #TODO: must become client error: die "Thread already joined"
+#warn "Thread $CLIENT2TID{$client} attempted to join an already joined thread: $tid";   #TODO: for debugging only
+        $WRITE{$client} = _pack_response( [0, 'Thread already joined'] );
     } elsif (!exists $TID2CLIENT{$tid}) {
 #warn "case 4: $CLIENT2TID{$client} cannot join $tid";  #TODO: for debugging only
-        $WRITE{$client} = $empty;
+        $WRITE{$client} = _pack_response( [0, 'Cannot join a detached or already joined thread'] );
     } elsif (!exists( $TID2PID{$tid} ) || !CORE::kill(0, $TID2PID{$tid})) {
 #warn "case 5: $CLIENT2TID{$client} cannot join $tid";  #TODO: for debugging only
-        $WRITE{$client} = $empty;
+        $WRITE{$client} = _pack_response( [0, 'Cannot join a detached or already joined thread'] );
     } elsif (defined $BLOCKING_JOIN{$tid}) {
-        warn "Thread $CLIENT2TID{$client} attempted to join a thread already pending join: $tid";
-        $WRITE{$client} = $undef; # must become client error: die "Thread already pending join"
+#warn "Thread $CLIENT2TID{$client} attempted to join a thread already pending join: $tid";  #TODO: for debugging only
+        $WRITE{$client} = _pack_response( [0, 'Thread already joined'] );
+    } elsif ($CLIENT2TID{$client} == $tid) {
+        $WRITE{$client} = _pack_response( [0, 'Cannot join self'] );
     } else {
 #warn "case 6: $CLIENT2TID{$client} blocking on $tid";  #TODO: for debugging only
         $BLOCKING_JOIN{$tid} = $client;
@@ -2603,6 +2827,24 @@ sub _error {
         ? _pack_response( [$ERROR{$tid}] )
         : $undef;
 } #error
+
+#---------------------------------------------------------------------------
+#  IN: 1 client socket
+#      2 thread id of thread, or not defined (if we want global stack size)
+#      3 new default stack size (defined if this is a set operation)
+
+sub _get_set_stack_size {
+
+# Obtain client socket and TID
+# Look up old stack size for this thread
+# Set new stack size, if defined and is a valid integer
+# Return old stack size
+
+    my ($client,$tid,$size) = @_;
+    my $old = defined $tid ? $TID2STACKSIZE{$tid} : $ITHREADS_STACK_SIZE;
+    $ITHREADS_STACK_SIZE = $size if defined $size && $size =~ m/^\d+$/o;
+    $WRITE{$client} = _pack_response( [$old] );
+} #_get_set_stack_size
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
@@ -2823,6 +3065,24 @@ sub _bless {
 
 #---------------------------------------------------------------------------
 #  IN: 1 client socket
+#      2 ordinal number of variable to analyze
+# OUT: 1 refaddr of variables
+
+sub _id {
+
+# Obtain the socket
+# Obtain the object to work with
+
+    my $client = shift;
+    my $object = $TIED[shift];
+
+# Write response to client
+
+    $WRITE{$client} = _pack_response( [refaddr( ${$object} )] );
+} #_id
+
+#---------------------------------------------------------------------------
+#  IN: 1 client sockets
 #      2 ordinal number of variable to remove
 # OUT: 1 whether successful
 
@@ -3067,6 +3327,8 @@ sub _broadcast {
 #  For all waiting or timed waiting threads
 #   If the signal ordinal is the same as the lock ordinal or the variable they are waiting to relock is currently locked
 #    Add it to the head of the locking list
+#    Purge waiting list for this ordinal (as it's been transferred to locking list)
+#    (Perl < 5.8 delete appears to sometimes corrupt array, so use undef in these cases)
 #   Else (lock var is not same as signal var and lock var is currently unlocked)
 #    Assign lock to this tid
 #    Immediately notify blocking thread that it should continue
@@ -3084,6 +3346,10 @@ sub _broadcast {
                 $LOCKED[$l_ordinal] = $tid;
                 $WRITE{$TID2CLIENT{$tid}} = $true;
             }
+        }
+        if ($] < 5.008) {
+            $WAITING[$ordinal] = undef;
+        } else {
             delete $WAITING[$ordinal];
         }
     }
@@ -3096,9 +3362,9 @@ sub _broadcast {
                 $LOCKED[$l_ordinal] = $tid;
                 $WRITE{$TID2CLIENT{$tid}} = $true;
             }
-            delete $TIMEDWAITING{$ordinal};
             $TIMEDWAITING_IDX_EXPIRED = 1;
         }
+        delete $TIMEDWAITING{$ordinal};
     }
     
     $WRITE{$client} = $undef;
@@ -3294,7 +3560,7 @@ sub _isjoined {
 # Mark that thread as joined
 # Delete thread context information
 
-    $WRITE{$client} = _pack_response( \@_ );
+    $WRITE{$client} = _pack_response( [1, @_] );
 #warn "case 7: tid $tid had this to say (".scalar(@_)."): ".CORE::join(',', @_);    #TODO: for debugging only
     delete( $BLOCKING_JOIN{$tid} );
     delete( $RESULT{$tid} );
@@ -3350,14 +3616,62 @@ sub _client2tidpid {
 
 #---------------------------------------------------------------------------
 
-sub _run_CLONE {
+sub _run_CLONE_SKIP {
 
+# Prepare hash for results
 # For every module loaded
 #  Initialize code reference
 #  If we tried to get the code reference before (may be undef if not found)
 #   Use that
 
-    while (my $logical = each %INC) {
+    my %result;
+    my %INC_to_parse = (%INC, 'main.pm' => 1);
+    while (my $logical = each %INC_to_parse) {
+        my $code;
+        if (exists $CLONE_SKIP{$logical}) {
+            $code = $CLONE_SKIP{$logical};
+
+#  Else
+#   Make copy of logical name
+#   If it looks like a true module
+#    Make sure directories are properly represented in the name
+#    Attempt to obtain the code reference, don't care if failed
+#   Else
+#    Make sure we don't try this again
+#  Execute the CLONE_SKIP subroutine if found, and save result
+# Return results
+
+        } else {
+            my $module = $logical;
+            if ($module =~ s#\.pm$##) {
+                $module =~ s#/#::#g;
+                $code = $CLONE_SKIP{$logical} = eval { $module->can( 'CLONE_SKIP' ) };
+            } else {
+                $CLONE_SKIP{$logical} = undef;
+            }
+        }
+        $result{$logical} = &{$code} if $code;
+    }
+    
+    return \%result;
+} #_run_CLONE
+
+#---------------------------------------------------------------------------
+
+sub _run_CLONE {
+
+# Load results of _run_CLONE_SKIP
+# Load hash of %INC modules returned by _run_CLONE_SKIP
+# For every module loaded
+#  Skip this module if CLONE_SKIP returned a true value
+#  Initialize code reference
+#  If we tried to get the code reference before (may be undef if not found)
+#   Use that
+
+	my $clone_skip = shift || {};
+    my %INC_to_parse = (%INC, 'main.pm' => 1);
+    while (my $logical = each %INC_to_parse) {
+    	next if exists( $clone_skip->{$logical} ) && $clone_skip->{$logical};
         my $code;
         if (exists $CLONE{$logical}) {
             $code = $CLONE{$logical};
@@ -3395,7 +3709,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.27.
+This documentation describes version 0.28.
 
 =head1 SYNOPSIS
 
@@ -3589,10 +3903,12 @@ If you use forks for the first time as "use forks" and other loaded code uses
  Attribute::Handlers (any)
  Devel::Required (0.07)
  File::Spec (any)
+ if (any)
  IO::Socket (1.18)
  List::MoreUtils (0.15)
  Scalar::Util (1.09)
  Storable (any)
+ Test::More (any)
  Time::HiRes (any)
 
 =head1 IMPLEMENTATION
@@ -3628,7 +3944,7 @@ detached thread and will allow all the threads methods to operate.
 This method is mainly intended to be used from within a child-init handler
 in a pre-forking Apache server.  All the children that handle requests become
 threads as far as Perl is concerned, allowing you to use shared variables
-between all of the Apache processes.
+between all of the Apache processes.  See L<Apache::forks> for more information.
 
 =head2 debug
 
@@ -3646,6 +3962,24 @@ a better performance.  If the environment variable has a true value, then
 debugging will also be enabled from the start.
 
 =head1 EXTRA FEATURES
+
+=head2 Native threads 'to-the-letter' emulation mode
+
+By default, forks behaves slightly differently than native ithreads, regarding
+shared variables.  Specifically, native threads does not support splice() on
+shared arrays, nor does it retain any pre-existing values of arrays or hashes
+when they are shared; however, forks supports all of these functions.  These are
+behaviors are considered limitations/bugs in the current native ithread
+implementation.
+
+To allow for complete drop-in compatibility with scripts and modules written for
+threads.pm, you may specify the environment variable C<THREADS_NATIVE_EMULATION>
+to a true value before running your script.  This will instruct forks to behave
+exactly as native ithreads would in the above noted situations.
+
+This mode may also be enabled by default (without requiring this environment variable
+if you do not have a threaded Perl and wish to install forks as a full drop-in
+replacement.  See L</"Perl built without native ithreads"> for more information.
 
 =head2 Deadlock detection
 
@@ -3725,6 +4059,28 @@ This behavior conforms to the expected behavior of native Perl threads. The
 only subtle difference is that the main thread will be signaled using SIGABRT
 to immediately exit.
 
+=head2 END block behavior
+
+In native ithreads, END blocks are only executed in the thread in which the
+code was loaded/evaluated.  However, in forks, END blocks are processed in
+all threads that are aware of such code segments (i.e. threads started after
+modules with END blocks are loaded).  This may be considered a bug or a feature,
+depending on what your END blocks are doing (such as closing important external
+resources, for which each thread may have it's own handle.
+
+In general, it is a good defensive programming practice to add the following to
+your END blocks when you want to insure sure they only are evaluated in the thread
+that they were created in:
+
+    my $tid = threads->tid if exists $INC{'threads.pm'};
+    END {
+	    return if defined($tid) && $tid != threads->tid;
+	    # standard end block code goes here
+    }
+    
+This code is completely compatible with native ithreads.  Note that this
+behavior may change in the future (at least with THREADS_NATIVE_EMULATION mode).
+
 =head2 Modifying signals
 
 Since the threads API provides a method to send signals between threads
@@ -3788,7 +4144,7 @@ threads (processes) if you define your own CHLD handler.
 You may define the environment variable THREADS_SIGCHLD_IGNORE to to force 
 forks to use 'IGNORE' on systems where a custom CHLD signal handler has been
 automatically installed to support correct exit code of perl core system()
-function.  Not that this should *not* be necessary unless you encounter specific
+function.  Note that this should *not* be necessary unless you encounter specific
 issues with the forks.pm CHLD signal handler.
 
 =head1 CAVEATS
@@ -3819,6 +4175,13 @@ created thread (process).
 If you treat such sensitive resources (such as L<DBI> driver instances) as 
 non-thread-safe by default and close these resources prior to creating a new
 thread, you should never encounter any issues.
+
+=head2 Can't return unshared filehandles from threads
+
+Currently, it is not possible to return a file handle from a thread to the
+thread that is joining it.  Attempting to do so will throw a terminal error.
+However, if you share the filehandle first with L<forks::shared>, you can safely
+return the shared filehandle.
 
 =head2 Signals and safe-signal enabled Perl
 
@@ -3872,13 +4235,13 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2007 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2008 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<threads>, L<forks::BerkeleyDB>.
+L<threads>, L<forks::BerkeleyDB>, L<Apache::forks>.
 
 =cut

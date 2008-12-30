@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.27';
+$VERSION = '0.28';
 
 use Config ();
 
@@ -34,8 +34,10 @@ package
 # Compatibility with the standard threads::shared
 # Do everything by the book from now on
 
-$VERSION  = '1.14';
-$threads_shared = $threads_shared = 1;
+BEGIN {
+    $VERSION  = '1.26';
+    $threads_shared = $threads_shared = 1;
+}
 use strict;
 use warnings;
 
@@ -46,8 +48,6 @@ use warnings;
 #   Fake that threads::shared.pm was really loaded (if not set already)
 #  Elsif there are (real) threads loaded
 #   Die now indicating we can't mix them
-#  Else (using forks::shared without either forks.pm or threads.pm)
-#   Die (we'll handle this maybe later)
 
 BEGIN {
     if (defined $INC{'threads.pm'} && $forks::threads_override) {
@@ -70,52 +70,67 @@ use List::MoreUtils;
 # If forks.pm is loaded
 #  Make sure we have a local copy of the base command handler on the client side
 # Else
-#  Have share do nothing, just return the ref
+#  Load the XS stuff
 #  If we're running a perl older than 5.008
-#   Disable the cond_xxxx family with no prototypes
+#   Disable the cond_xxxx family and other exported routines, without prototypes
 #  Else
-#   Disable the cond_xxxx family
+#   Have share do nothing, just return the ref
+#   Disable the cond_xxxx family and other exported routines
 
 if ($forks::threads || $forks::threads) { # twice to avoid warnings
     *_command = \&threads::_command;
     *is_shared = \&_id;
 } else {
-    *share = \&share_disabled;
+    
+    require XSLoader;
+    XSLoader::load( 'forks',$forks::shared::VERSION );
+
+    no warnings 'redefine';
     if ($] < 5.007003) {
-        *is_shared = *lock = *cond_signal = *cond_broadcast = sub {undef};
-        *cond_wait = sub {undef};
-        *cond_timedwait = sub {undef};
+        *share = *is_shared = *lock = *cond_signal = *cond_broadcast
+            = *shared_clone = *cond_wait = *cond_timedwait = sub { undef };
     } else {
-        *is_shared = *lock = *cond_signal = *cond_broadcast = sub (\[$@%]) {undef};
-        *cond_wait = sub (\[$@%];\[$@%]) {undef};
-        *cond_timedwait = sub (\[$@%]$;\[$@%]) {undef};
+        *share = sub (\[$@%]) { return $_[0] };
+        *is_shared = *lock = *cond_signal = *cond_broadcast = sub (\[$@%]) { undef };
+        *cond_wait = sub (\[$@%];\[$@%]) { undef };
+        *cond_timedwait = sub (\[$@%]$;\[$@%]) { undef };
+        *shared_clone = sub { undef };
     }
 }
 
-# Avoid warnings
-
-*share =
-*lock =
-*cond_wait =
-*cond_timedwait =
-*cond_signal =
-*cond_broadcast =
- sub {} if 0;
-
 # Clone detection logic
 # Ordinal numbers of shared variables being locked by this thread
+# Whether to retain existing variable content during tie to threads::shared::* modules
+# Local cache of self-referential circular references (pertie workaround): tied obj => REF
+# Reverse lookup of local thread cache of self-referential circular references
 
 our $CLONE = 0;
 our %LOCKED;
+our $CLONE_TIED = !eval {forks::THREADS_NATIVE_EMULATION()};
+our %CIRCULAR;
+our %CIRCULAR_REVERSE;
 
-# Do this at compile time
-#  Localize $WARNINGS to silence Attributes::Shared when overloading ATTR 'shared'
-#  Load forks::shared attributes
+# If Perl 5.8 or later core doesn't include required internal hooks (possibly compiled out)
+#  Force suppressed 'shared' attribute to surface as 'Forks_shared' in Core attributes.pm
 
-BEGIN {
+if ($] >= 5.0008 && !__DEF_PL_sharehook()) {
+    require attributes;
+    my $old = \&attributes::_modify_attrs;
+    no warnings 'redefine';
+    *attributes::_modify_attrs = sub {
+        my ($ref, @attr) = @_;
+        return ($old->(@_), (grep(/^shared$/o, @attr) ? 'Forks_shared' : ()));
+    };
+}
+
+# If Perl core doesn't support the required internal hooks
+#  Localize $WARNINGS to silence warning when overloading ATTR 'shared'
+#  Load forks::shared::attributes to overload 'shared' attribute handling
+
+if ($] < 5.0008 || !__DEF_PL_sharehook()) {
     local $^W = 0;
     require forks::shared::attributes;
-} #BEGIN
+}
 
 #---------------------------------------------------------------------------
 # If we're running in a perl before 5.8.0, we need a source filter to change
@@ -127,29 +142,20 @@ BEGIN {
 #
 #  share( \$x );
 #
-# The same applies for lock(), cond_wait(), cond_timedwait(), cond_signal() and cond_broadcast().
+# The same applies for most other exported threads::shared functions.
 #
 # We do this by conditionally adding the source filter functionality if we're
 # running in a versione before 5.8.0.
-#---------------------------------------------------------------------------
-# If we're running in a perl 5.9.0 or later, we need a source filter to change
-# all occurrences of
 #
+# We also will use a source filter to change all occurrences of
 #  [my|our] [VAR | (VAR1, VAR2, ...])] : shared
-#
 # to:
-#
 #  [my|our] [VAR | (VAR1, VAR2, ...])] : Forks_shared
-#
-# We do this by conditionally adding the source filter functionality if we're
-# running in a version 5.9.0 or later.  It is not clear whether this issue is
-# deliberate behavior of these perl version to prevent reserved attribute names
-# from being manipulated; however, it prevents Attribute::Handlers from being
-# able to handle 'shared' attributes.
+# to suppress some warnings in Perl before 5.8.0.
 
 my $filtering; # are we filtering source code?
 BEGIN {
-    eval <<'EOD' if ($filtering = ( $] < 5.008 || $] >= 5.009 )); # need string eval ;-(
+    eval <<'EOD' if ($filtering = $] < 5.008 ); # need string eval ;-(
 
 use Filter::Util::Call (); # get the source filter stuff
 
@@ -161,21 +167,19 @@ sub filter {
 
 # Initialize status
 # If there are still lines to read
-#  If this is perl < 5.008
-#   Convert the line if there is any mention of our special subs
-#  Else if this is perl >= 5.009
-#   Convert the line if there is any mention of our attribute
+#  Convert the line if there is any mention of our special subs
 # Return the status
 
     my $status;
     if (($status = Filter::Util::Call::filter_read()) > 0) {
-        if ($] < 5.008) {
 #warn $_ if         # activate if we want to see changed lines
-            s#(\b(?:cond_broadcast|cond_wait|cond_timedwait|cond_signal|share|lock)\b\s*(?!{)\(?\s*)(?=[mo\$\@\%])#$1\\#sg;
-        } elsif ($] >= 5.009) {
+        s#(\b(?:cond_wait)\b\s*(?!{)\(?\s*[^,]+,\s*)(?=[mo\$\@\%])#$1\\#sg;
 #warn $_ if         # activate if we want to see changed lines
-            s#((?:my|our)((?:\s|\()*[\$@%*]\w+(?:\s|\)|,)*)+\:\s*)\bshared\b#$1Forks_shared#sg;
-        }
+        s#(\b(?:cond_timedwait)\b\s*(?!{)\(?\s*[^,]+,[^,]+,\s*)(?=[mo\$\@\%])#$1\\#sg;
+#warn $_ if         # activate if we want to see changed lines
+        s#(\b(?:cond_broadcast|cond_wait|cond_timedwait|cond_signal|share|is_shared|threads::shared::_id|lock)\b\s*(?!{)\(?\s*)(?=[mo\$\@\%])#$1\\#sg;
+#warn $_ if         # activate if we want to see changed lines
+        s#((?:my|our)((?:\s|\()*[\$@%*]\w+(?:\s|\)|,)*)+\:\s*)\bshared\b#$1Forks_shared#sg;
     }
     $status;
 } #filter
@@ -229,6 +233,125 @@ BEGIN {
         = \&forks::shared::set_deadlock_option;
 }
 
+# Predeclarations for internal functions
+
+my ($make_shared);
+
+# Create a thread-shared clone of a complex data structure or object
+
+sub shared_clone
+{
+
+# Die unless arguments are correct
+
+    if (@_ != 1) {
+        Carp::croak('Usage: shared_clone(REF)');
+    }
+
+# Clone all shared data during this process
+# Return cloned result
+
+    local $CLONE_TIED = 1;
+    return $make_shared->(shift, {});
+}
+
+# Used by shared_clone() to recursively clone
+#   a complex data structure or object
+$make_shared = sub {
+    my ($item, $cloned) = @_;
+
+    # Just return the item if:
+    # 1. Not a ref;
+    # 2. Already shared; or
+    # 3. Not running 'threads'.
+    {
+        no warnings 'uninitialized';
+        return $item if (! ref($item) || is_shared($item) || ! $threads::threads);
+    }
+
+    # Check for previously cloned references
+    #   (this takes care of circular refs as well)
+    my $addr = refaddr($item);
+    if (exists($cloned->{$addr})) {
+        # Return the already existing clone
+        return $cloned->{$addr};
+    }
+
+    # Make copies of array, hash and scalar refs and refs of refs
+    my $copy;
+    my $ref_type = reftype($item);
+
+    # Copy an array ref
+    if ($ref_type eq 'ARRAY') {
+        # Make empty shared array ref
+        $copy = &share([]);
+        # Add to clone checking hash
+        $cloned->{$addr} = $copy;
+        # Recursively copy and add contents
+        push(@$copy, map { $make_shared->($_, $cloned) } @$item);
+    }
+
+    # Copy a hash ref
+    elsif ($ref_type eq 'HASH') {
+        # Make empty shared hash ref
+        $copy = &share({});
+        # Add to clone checking hash
+        $cloned->{$addr} = $copy;
+        # Recursively copy and add contents
+        foreach my $key (keys(%{$item})) {
+            $copy->{$key} = $make_shared->($item->{$key}, $cloned);
+        }
+    }
+
+    # Copy a scalar ref
+    elsif ($ref_type eq 'SCALAR') {
+        $copy = \do{ my $scalar = $$item; };
+        share($copy);
+        # Add to clone checking hash
+        $cloned->{$addr} = $copy;
+    }
+
+    # Copy of a ref of a ref
+    elsif ($ref_type eq 'REF') {
+        # Special handling for $x = \$x
+        if ($addr == refaddr($$item)) {
+            $copy = \$copy;
+            share($copy);
+            $cloned->{$addr} = $copy;
+        } else {
+            my $tmp;
+            $copy = \$tmp;
+            share($copy);
+            # Add to clone checking hash
+            $cloned->{$addr} = $copy;
+            # Recursively copy and add contents
+            $tmp = $make_shared->($$item, $cloned);
+        }
+
+    } else {
+        Carp::croak("Unsupported ref type: ", $ref_type);
+    }
+
+    # If input item is an object, then bless the copy into the same class
+    if (my $class = blessed($item)) {
+        CORE::bless($copy, $class);
+    }
+
+    # Clone READONLY flag
+    if ($] >= 5.008003) {
+        if ($ref_type eq 'SCALAR') {
+            if (Internals::SvREADONLY($$item)) {
+                Internals::SvREADONLY($$copy, 1);
+            }
+        }
+        if (Internals::SvREADONLY($item)) {
+            Internals::SvREADONLY($copy, 1);
+        }
+    }
+
+    return $copy;
+};
+
 #---------------------------------------------------------------------------
 
 # Increment the current clone value (mark this as a cloned version)
@@ -241,7 +364,14 @@ sub CLONE { $CLONE++ } #CLONE
 #      3 initial value of scalar
 # OUT: 1 instantiated object
 
-sub TIESCALAR { shift->_tie( 'scalar',@_ ) } #TIESCALAR
+sub TIESCALAR {
+
+# Clone all shared data during this process
+# Return tied result
+
+    local $CLONE_TIED = 1;
+    shift->_tie( 'scalar',@_ );
+} #TIESCALAR
 
 #---------------------------------------------------------------------------
 #  IN: 1 class for which to bless
@@ -265,23 +395,32 @@ sub TIEHASH { shift->_tie( 'hash',@_ ) } #TIEHASH
 
 sub TIEHANDLE { shift->_tie( 'handle',@_ ) } #TIEHANDLE
 
+# Define generic perltie proxy methods for most scalar, array, hash, and handle events
+
+BEGIN {
+    no strict 'refs';
+    foreach my $method (qw/BINMODE CLEAR CLOSE DELETE EOF EXISTS EXTEND FETCHSIZE FILENO FIRSTKEY GETC
+        NEXTKEY OPEN POP PRINT PRINTF READ READLINE SCALAR SEEK SHIFT STORESIZE TELL UNSHIFT WRITE/) {
+
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2..N input parameters
 # OUT: 1..N output parameters
 
-sub AUTOLOAD {
+        *$method = sub {
 
 # Obtain the object
 # Obtain the subroutine name
 # Handle the command with the appropriate data and obtain the result
 # Return whatever seems appropriate
 
-    my $self = shift;
-    (my $sub = $threads::shared::AUTOLOAD) =~ s#^.*::#$self->{'module'}::#;
-    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
-    wantarray ? @result : $result[0];
-} #AUTOLOAD
+            my $self = shift;
+            my $sub = $self->{'module'}.'::'.$method;
+            my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+            wantarray ? @result : $result[0];
+        }
+    }
+}
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -301,7 +440,76 @@ sub PUSH {
     my $sub = $self->{'module'}.'::PUSH';
     my @result = _command( '_tied',$self->{'ordinal'},$sub,map($_, @_) );
     wantarray ? @result : $result[0];
-} #SPLICE
+} #PUSH
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2..N input parameters
+# OUT: 1..N output parameters
+
+sub STORE {
+
+# Obtain the object
+# Obtain the subroutine name
+# If this is a scalar and to-be stored value is a reference
+#  Obtain the object
+#  Die if the reference is not a threads::shared tied object
+
+    my $self = shift;
+    my $sub = $self->{'module'}.'::STORE';
+    if (my $ref = reftype($_[1])) {
+        my $object;
+        if ($ref eq 'SCALAR') {
+            $object = tied ${$_[1]};
+        } elsif ($ref eq 'ARRAY') {
+            $object = tied @{$_[1]};
+        } elsif ($ref eq 'HASH') {
+            $object = tied %{$_[1]};
+        } elsif ($ref eq 'GLOB') {
+            $object = tied *{$_[1]};
+        }
+        Carp::croak "Invalid value for shared scalar"
+            unless defined $object && $object->isa('threads::shared');
+    }
+
+# Handle the command with the appropriate data and obtain the result
+# Delete cached shared self-circular reference lookups, if exists and self is a tied scalar
+# Return whatever seems appropriate
+
+    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    delete $CIRCULAR_REVERSE{delete $CIRCULAR{$self}} if $self->{'type'} eq 'scalar' && exists $CIRCULAR{$self};
+    wantarray ? @result : $result[0];
+} #STORE
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2..N input parameters
+# OUT: 1..N output parameters
+
+sub FETCH {
+
+# Obtain the object
+# Obtain the subroutine name
+# Handle the command with the appropriate data and obtain the result
+# If this is a tied scalar and the remote value is a circular self-reference
+#  Return cached shared self-circular reference, if exists
+#  Store cached shared self-circular reference lookup
+#  Store reverse reference -> cached shared self-circular reference lookup
+#  (Note: this value is localized per thread, so the same shared self-circular
+#         variable will return different is_shared() values in different threads
+# Return whatever seems appropriate
+
+    my $self = shift;
+    my $sub = $self->{'module'}.'::FETCH';
+    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    if ($self->{'type'} eq 'scalar' && ref($result[0]) eq 'REF'
+        && ref(${$result[0]}) eq 'REF') {    #TODO: is this too simple?  Do we need to contact remote process?  Seems like we should at least do a refaddr equality check (on the remote process) to validate this is a self-circular reference
+        return $CIRCULAR{$self} if exists $CIRCULAR{$self};
+        $CIRCULAR{$self} = $result[0];
+        $CIRCULAR_REVERSE{$result[0]} = $self;
+    }
+    wantarray ? @result : $result[0];
+} #FETCH
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -310,14 +518,14 @@ sub PUSH {
 
 sub SPLICE {
 
-# Die now if running in thread override mode
+# Die now if running in thread emulation mode
 # Obtain the object
 # Obtain the subroutine name
 # Handle the command with the appropriate data and obtain the result
 # Return whatever seems appropriate
 
     Carp::croak('Splice not implemented for shared arrays')
-        if $forks::threads_override;
+        if eval {forks::THREADS_NATIVE_EMULATION()};
     my $self = shift;
     my $sub = $self->{'module'}.'::SPLICE';
     my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
@@ -368,7 +576,7 @@ sub _export {
 # Export whatever needs to be exported
 
     my $namespace = shift().'::';
-    my @export = qw(share is_shared lock cond_wait cond_timedwait cond_signal cond_broadcast);
+    my @export = qw(share shared_clone is_shared lock cond_wait cond_timedwait cond_signal cond_broadcast);
     push @export, 'bless' if $threads::threads && $threads::threads;
     @export = @_ if @_;
     no strict 'refs';
@@ -395,13 +603,13 @@ sub _tie {
 # Make sure we can do clone detection logic
 # Set the type of variable to be blessed
 # Obtain the module name to be blessed inside the shared "thread"
-# Obtain the ordinal number for this tied variable (don't pass ref if running in threads override mode)
+# Obtain the ordinal number for this tied variable (don't pass ref if running in threads emulation mode)
 # Create the blessed object and return it
 
     $self->{'CLONE'} = $CLONE;
     $self->{'type'} = $type;
     $self->{'module'} ||= $class.'::'.$type;
-    $self->{'ordinal'} = _command( '_tie',$self,$forks::threads_override ? () : @_ );
+    $self->{'ordinal'} = _command( '_tie',$self,( $CLONE_TIED ? @_ : () ) );
     CORE::bless $self,$class;
 } #_tie
 
@@ -440,16 +648,27 @@ sub _share {
 } #_share
 
 #---------------------------------------------------------------------------
-#  IN: 1 reference to variable to be shared
+#  IN: 1 reference to variable
 
-sub _id (\[$@%]) {
+sub __id {
 
 # Obtain the reference to the variable
 # Create the reference type of that reference
+# Dereference a REF or non-tied SCALAR reftype value
+#  Return cached refaddress if this is a shared circular self-reference (perltie workaround)
+# Return immediately if this is not a valid reference
 # Initialize the object
 
     my $it  = shift;
     my $ref = reftype $it;
+    while ($ref && ($ref eq 'REF' || ($ref eq 'SCALAR' && !tied ${$it}))) {
+        $it = ${$it};
+        $ref = reftype $it;
+        if ($ref && $ref eq 'REF') {    #possible self-circular reference
+            return exists $CIRCULAR_REVERSE{$it} ? refaddr($CIRCULAR{$CIRCULAR_REVERSE{$it}}) : undef;
+        }
+    }
+    return undef unless $ref;
     my $object;
 
 # Obtain the object
@@ -465,16 +684,19 @@ sub _id (\[$@%]) {
     }
 
 # If the reference is a threads::shared tied object
-#  Return the refaddr of the variable
+#  Get the ordinal of the variable
+#  Return the global refaddr of the shared variable
 # Else
 #  Return undef
 
     if (defined $object && $object->isa('threads::shared')) {
-        return refaddr($it);
+        my $ordinal = $object->{'ordinal'};
+        my $retval = _command( '_id',$ordinal );
+        return $retval;
     } else {
         return undef;
     }
-}
+} #_id
 
 #---------------------------------------------------------------------------
 #  IN: 1..N ordinal numbers of variables to unlock
@@ -529,7 +751,7 @@ sub _bless {
         my $retval = _command( '_bless',$ordinal,@_ );
         return wantarray ? ($ordinal,$retval) : $ordinal;
     }
-}
+} #_bless
 
 #---------------------------------------------------------------------------
 #  IN: 1 remote subroutine to call
@@ -610,6 +832,7 @@ sub _remote {
 
 #  Execute the indicated subroutine for this shared variable
 #  Return the variable's ordinal number (and _command return scalar value if wantarray)
+
         my $retval = _command( $sub,$ordinal,@_ );
         return wantarray ? ($ordinal,$retval) : $ordinal;
     }
@@ -651,6 +874,9 @@ forks::shared - drop-in replacement for Perl threads::shared with forks()
   share( @array );
   share( %hash );
 
+  $variable = shared_clone($non_shared_ref_value);
+  $variable = shared_clone({'foo' => [qw/foo bar baz/]});
+
   lock( $variable );
   cond_wait( $variable );
   cond_wait( $variable, $lock_variable );
@@ -683,14 +909,14 @@ version C<1.05>.
 
 =head1 EXPORT
 
-C<share>, C<cond_wait>, C<cond_timedwait>, C<cond_signal>, C<cond_broadcast>,
-C<is_shared>, C<bless>
+C<share>, C<shared_clone>, C<cond_wait>, C<cond_timedwait>, C<cond_signal>,
+C<cond_broadcast>, C<is_shared>, C<bless>
 
 See L<threads::shared/"EXPORT"> for more information.
 
 =head1 OBJECTS
 
-L<forks::shared> exports a versio of L<bless()|perlfunc/"bless REF"> that
+L<forks::shared> exports a version of L<bless()|perlfunc/"bless REF"> that
 works on shared objects, such that blessings propagate across threads.  See
 L<threads::shared> for usage information and the L<forks> test suite for
 additional examples.
@@ -778,31 +1004,22 @@ when they become shared with the share() function.
 
 This B<could> be considered a bug in the standard Perl implementation.  In any
 case this is an inconsistency of the behaviour of threads.pm and forks.pm.
-Maybe a special "totheletter" option should be added to forks.pm to make
-forks.pm follow this behaviour of threads.pm to the letter.
 
-NOTE: If you do not have a natively threaded perl and you have installed and
+If you do not have a natively threaded perl and you have installed and
 are using forks in "threads.pm" override mode (where "use threads" loads
 forks.pm), then this module will explicitly emulate the behavior of standard
 threads::shared and lose value for arrays and hashes with share().
 Additionally, array splice function will become a no-op with a warning.
+
+You may also enable this mode by setting the environment variable 
+C<THREADS_NATIVE_EMULATION> to a true value before running your script.  See
+L<forks/"Native threads 'to-the-letter' emulation mode"> for more information.
 
 =head1 CAVIATS
 
 Some caveats that you need to be aware of.
 
 =over 2
-
-=head2 Source filter
-
-To get C<forks::shared> working on Perl 5.9.0 or later, it was necessary to
-use a source filter to overload and correctly implement the 'shared' Perl
-variable attribute.  A change introduced in 5.9.0 that prevents access to
-previously accessible attribute internals created the need for this
-(temporary) solution.
-
-The source filter used is syntactically correct, but may prove to be too simple.
-Please report any problems that you may find when running under 5.9.0 or later.
 
 =item test-suite exits in a weird way
 
@@ -812,16 +1029,6 @@ is an issue with Test::More's END block, which wasn't designed to co-exist
 with a threads environment and forked processes.  Hopefully, that module will
 be patched in the future, but for now, the warnings are harmless and may be
 safely ignored.
-
-=back
-
-=head1 CREDITS
-
-=over 2
-
-=item threads::shared
-
-For some of the XS code used for forks::shared exported bless function.
 
 =back
 
@@ -836,7 +1043,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2007 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2008 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

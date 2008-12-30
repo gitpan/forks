@@ -11,6 +11,7 @@ BEGIN {
 
 BEGIN {delete $ENV{THREADS_DEBUG}} # no debugging during testing!
 
+use Config;
 my ($skip_all, $num_tests);
 BEGIN {
     $skip_all = 0;
@@ -26,6 +27,9 @@ BEGIN {
     if ($@) {
         $skip_all = 1;
         $num_tests = 1;
+        eval {
+            *cond_wait = *cond_timedwait = sub {};
+        } unless $Config{useithreads};
     }
 }
 
@@ -44,12 +48,48 @@ EOUTPUT
 
     import threads;
     import threads::shared;
+
+    # "Unpatch" Test::More, who internally tries to disable threads
+    no warnings 'redefine';
+    if ($] < 5.008001) {
+        require forks::shared::global_filter;
+        import forks::shared::global_filter 'Test::Builder';
+        require Test::Builder;
+        *Test::Builder::share = \&threads::shared::share;
+        *Test::Builder::lock = \&threads::shared::lock;
+        Test::Builder->new->reset;
+    }
+}
+
+# Patch Test::Builder to add fork-thread awareness
+{
+    no warnings 'redefine';
+    my $_sanity_check_old = \&Test::Builder::_sanity_check;
+    *Test::Builder::_sanity_check = sub {
+        my $self = $_[0];
+        # Don't bother with an ending if this is a forked copy.  Only the parent
+        # should do the ending.
+        if( $self->{Original_Pid} != $$ ) {
+            return;
+        }
+        $_sanity_check_old->(@_);
+    };
+}
+
+# Now load Test::More
+BEGIN {
     require Test::More;
     import Test::More tests => $num_tests;
 }
 
 use strict;
 use warnings;
+
+diag( <<EOD );
+
+These tests exercise general API compatibility and behavior (threads.pm replacement mode).
+
+EOD
 
 SKIP: {
 skip 'Forks will not be installed as replacement for threads.pm', $num_tests if $skip_all;
@@ -117,7 +157,7 @@ ok(is_shared( $scalar ), 'check if variable is_shared' );
 my $tied = tied( $scalar );
 isa_ok( $tied,'threads::shared',    'check tied object type' );
 
-ok( !defined $scalar,           'check scalar fetch' );
+ok( defined $scalar,            'check scalar fetch' );
 $scalar = 10;
 
 $scalar++;

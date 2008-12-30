@@ -1,4 +1,110 @@
-0.27	January 27 2007
+0.28	December 30 2008
+	***** Bug fixes *****
+	
+	join() and detach() now correctly propagate and throw exceptions to threads,
+	in such cases as joining or detaching an already joined or detached thread.
+	
+	Threads now supports circular self-referential shared variables
+	(i.e. my $x:shared; $x = \$x;) and consistently returns the correct REF value;
+	circular-referental sets of variables are also supported, if defined before
+	sharing with shared_clone()).
+	
+	forks::shared function is_shared() now understands REF type input and circular
+	referential shared variables.
+	
+	is_shared() should now return a consistent address in all threads and for
+	all variable types; however, note since it refences memory in the shared
+	process, do NOT use the return value to perform direct memory access (not that
+	it was intended for this purpose, anyway).
+	
+	Using single-declaration form of 'use constant' for Perl 5.6.x compatibility.
+	
+	Explicitly registering 'threads' warnings pragma, for Perl 5.6.x compatibility.
+	
+	Added more XS prototype compatibility with 5.6.x, allowing second forms of
+	cond_wait and cond_timedwait to be better supported.
+	
+	Added second forms of cond_wait and cond_timedwait to Perl < 5.8 source filters
+	(eliminates segfaults).
+	
+	Identified and implemented additional internal state conditions when error
+	'Cannot detach a joined thread' should occur.
+	
+	threads->list(threads::all) no longer returns threads that already have a
+	thread blocking to join them.
+	
+	Corrected a few uses of hash and array iterators that modify structure in loop
+	(using each() for hashes, separate array copy).
+	
+	***** Threads API consistency changes *****
+	
+	forks::shared now implements standard threads::shared function shared_clone().
+	
+	Scalars that have a value and are shared afterwards will retain the shared
+	value when running in native threads emulation mode.
+	
+	Restartable system calls (platform-dependent) and sleep (including Time::HiRes
+	sleep, usleep, and nanosleep) should no longer be interrupted by CHLD signal,
+	unless CHLD signal handler is defined in user code.  This should more accurately
+	represent process behavior with slow system calls, as would be expected with
+	native ithreads.
+
+	Bumped threads $VERSION to 1.71 and threads::shared $VERSION to 1.26 to match
+	version-supported features and behavior.
+	
+	forks::shared share() now correctly checks the function prototype when disabled
+	(e.g. when forks::shared is loaded without or before forks).
+
+	CLONE method/function is now supported in main:: package (was ignored).
+	
+	CLONE_SKIP method/function is now supported.
+	Usage details at: http://perldoc.perl.org/perl593delta.html#'CLONE_SKIP()'
+	
+	threads->object(0) now returns undef (main thread is not considered an object).
+	
+	Support for 'array' context type (alias for already supported 'list' type) when
+	creating a new thread.
+	
+	Thread attempting to join self (while non-detached) returns an error.
+	
+	Now correctly storing/returning stack size settings, although not internally used
+	for anything useful at this time.
+	
+	Core function rand() is now reseeded in each new thread (via srand()).
+	
+	***** Miscellaneous changes *****
+	
+	Added THREADS_NATIVE_EMULATION environment variable to allow users to have forks
+	behave more like native ithreads ("buggy" behaviors and all).
+	
+	Removed source filter requirement for Perl 5.9+.  (Now using internal PL_sharehook
+	instead of Attribute::Handlers whenver possible, including with Perl 5.8.x.)
+	
+	Removed use of AUTOLOAD in forks::shared; may see a minor shared variable access
+	performance improvement.
+	
+	Added signal blocking when doing fork() system call, to insure most reliable
+	thread startup behavior (i.e. custom CHLD signal handler won't create instability).
+		
+	Made minor changes to the test suite to improve descriptions and suppress a few
+	unnecessary warnings.
+	
+	Added internal patching mechanism to allow Test::More to work with Perl
+	5.8.1 and older (primarily for test suite backward compatibility).
+	
+	Silenced spurious Test::More "WOAH! ..." warnings in test suite, regarding Test::More
+	being unaware of global test counting when mixing forks and threads.
+
+	Added extra parameter error checking to XS code.
+	
+	Modified internal data manipulation for broadcast() to protect against occasional
+	memory corruption with Perl 5.6.x (delete() on array appeared to cause rare segfaults).
+	
+	Added 'if' CPAN module to package requirements, for Perl 5.6 support (test suite).
+	
+	Updated to ppport.h 3.14.
+
+0.27	January 27 2008
 	***** Bug fixes *****
 	
 	forks::shared now supports perl 5.9.0 and later (with a source filter).  The

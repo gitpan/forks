@@ -1,20 +1,17 @@
 ***** Future Features / Interface Changes *****
 
 optimizations:
-- implement more methods using custom filters (to reduce Storable usage)
 - support alternate, faster locking mechanisms (filesystem and/or SysV shmem)
 - allow for shared memory as transport medium
-	- one alternative is to use BerkeleyDB, e.g. forks::BerkeleyDB
-
-join() needs to be able to propagate (die) errors to threads.  Currently, it
-only return undef in error cases.
+	- current alternative is to use BerkeleyDB, e.g. forks::BerkeleyDB
+- implement more methods using custom filters (to reduce Storable usage)
 
 Make thread objects shared in nature, such that their properties may be read
 across all threads.  Will make _handle more reliable, and allow for thread
 state params to be persisted.
 
-Add support for CLONE_SKIP, if possible.  Or maybe just add support for a
-PRECLONE class method, which will be called in parent context.
+Consider support for CLONE_SKIP.  Or maybe just add support for a PRECLONE class
+method, which will be called in parent context.
 (http://perldoc.perl.org/perlmod.html#Making-your-module-threadsafe-threadsafe-thread-safe-module%2c-threadsafe-module%2c-thread-safe-CLONE-CLONE_SKIP-thread-threads-ithread)
 
 Add a method to give the user run-time privilege control over Unix socket 
@@ -23,12 +20,33 @@ file descriptors (for additional security control).
 
 ***** Issues to Address *****
 
+CLONE_SKIP needs to be aware of packages that aren't in %INC.  Same goes for CLONE.
+(Maybe use http://search.cpan.org/~gslondon/Symbol-Table-1.01/Table.pm#Hash_Keys)
+
+Circular references and ref(), Scalar::Util::reftype(), attribute::reftype() don't
+work well with perltie shared variables.  Likely a limitation of how we're using
+variables in a remote process.  May be able to improve on this by overloading
+all these functions with a forks::shared aware function that contacts remote process
+when variable is shared to determine what has circular recursion and what doesn't.
+
+END { } blocks should be skipped unless they were defined in a thread: eval "END {...}"
+or module use/require).  One idea is to somehow sneak POSIX::_exit(), as long as we
+are careful to flush buffered sockets before calling it.  NOTE: this behavior likely
+should ONLY occur when in native ithreads mode; I consider END {...} block execution
+a good thing for all threads that were aware of it otherwise.  (Note: better programming
+practice would be to use DESTROY method whenever possible, but END is important
+for some modules.
+
 Environment variables should be shared among all threads (ithreads behavior).
 
 Current working directory should be shared among all threads (ithreads behavior).
 
 Memory is currently not reclaimed for shared variables that are no longer
-referenced by any thread.
+referenced by any thread.  Possible solution: implement PL_destroyhook
+
+DESTROY will be called on shared objects in an exiting thread, even if still
+referenced in other threads.  Possible solution: implement PL_destroyhook and
+globally track shared variable refcount.
 
 Determine if it is possible to recover all memory from detached threads.  Joined
 threads reclaim all shared memory (very stable memory usage); detached threads
@@ -43,6 +61,11 @@ that have already terminated).  May wish to check client socket when join for
 that thread is requested: if socket exception, then assume client terminated;
 otherwise, wait for client (regularly checking client socket connection to
 determine if it has prematurely closed).
+
+Perl 5.6 doesn't seem to respond to thread global exit in this case:
+use forks; threads->new(sub { exit($desired_exit_val);} )->join(); sleep 10; sleep 10;
+
+***** Possible Issues to Address *****
 
 In rare cases, if the main thread dies, the server process doesn't appear to
 shut down correctly.  Sometimes, it appears to use high CPU usage (is stuck in a loop
@@ -64,16 +87,21 @@ forks 0.25, so may be resolved.
 
 ***** Miscellaneous Items *****
 
-May need to switch to using Sys::SigAction instead of SIG for more consistent
-signal behavior across different Perl versions.
+Hopefully, a future release of Sys::SigAction (>0.10) will correctly handle the
+'safe' sigaction attribute so we can removed the inline the module code.
 
-Enable custom concurrent alarm/ALRM behavior to support optimized locking mechanisms;
-specifically, SysV semaphores, filesystem, or other possibilities.
+Consider checking _check_pl_signal_unsafe_flag for any thread signaling behavior,
+and warn user about (or prevent from using) signals (i.e. deadlock detect, $t->kill).
+
+Allow manual disabling of forks.pm signal management (for embedding with other
+pragmas or interfaces that implement their own signals management, such as mod_perl
+via Apache::forks).
+
+Enable custom concurrent lock interface to support optimized locking mechanisms;
+specifically, SysV semaphores, filesystem (+alarm/ALRM), or other possibilities.
 
 Add additional tests to rigorously test tied handle (for shared var) behavior.
 Test delete with single, hash slice, and array slice elements.
-
-Add tests for $thr->join() error cases.
 
 Cache signal names from Config.pm for higher performance (avoid tied access)?
 
@@ -90,11 +118,6 @@ blockable).
 
 Add recursive lock tests with cond_* (to test that recursive locks are
 correctly acquired and released).
-
-Figure out how to suppress SIGIOT warnings on certain plaforms (Solaris):
-"Caught a SIGIOT at
-/usr/local/lib/perl5/site_perl/5.8.7/sun4-solaris-64/forks/signals.pm line 59"
-
 
 Add documentation explaining that forks installs a SIGCHLD handler by default,
 and that system calls in your user code may be interrupted by this handler

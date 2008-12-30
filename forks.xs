@@ -13,6 +13,8 @@ typedef struct {
 
 START_MY_CXT
 
+/* Scope hook to determine when a locked variable should be unlocked */
+
 void
 exec_leave(pTHX_ SV *both) {
     U32 process;
@@ -44,7 +46,70 @@ exec_leave(pTHX_ SV *both) {
     LEAVE;
 }
 
+/* Implements Perl-level share() and :shared */
+
+void
+Perl_sharedsv_share(pTHX_ SV *sv)
+{
+    dSP;
+    switch(SvTYPE(sv)) {
+/*    case SVt_PVGV:
+        Perl_croak(aTHX_ "Cannot share globs yet");
+        break; */
+
+    case SVt_PVCV:
+        Perl_croak(aTHX_ "Cannot share subs yet");
+        break;
+
+    default:
+        ENTER;
+        SAVETMPS;
+
+        PUSHMARK(sp);
+        XPUSHs(sv_2mortal(newRV_inc(sv)));
+        PUTBACK;
+
+        call_pv( "threads::shared::_share",G_DISCARD );
+
+        SPAGAIN;
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+
+        break;
+    }
+}
+
+/* Inititalize core Perl hooks */
+
+void
+Perl_sharedsv_init(pTHX)
+{
+/*    PL_lockhook = &Perl_sharedsv_locksv; */
+#ifdef PL_sharehook
+    PL_sharehook = &Perl_sharedsv_share;
+#endif
+#ifdef PL_destroyhook
+/*    PL_destroyhook = &Perl_shared_object_destroy; */
+#endif
+}
+
+
 MODULE = forks               PACKAGE = threads::shared
+
+#----------------------------------------------------------------------
+# OUT: 1 boolean value indicating whether core hook PL_sharehook exists 
+
+bool
+__DEF_PL_sharehook()
+    CODE:
+#ifdef PL_sharehook
+        RETVAL = 1;
+#else
+        RETVAL = 0;
+#endif
+    OUTPUT:
+        RETVAL
 
 #----------------------------------------------------------------------
 # OUT: 1 boolean value indicating whether unsafe signals are in use 
@@ -71,36 +136,14 @@ SV*
 share(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to share needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
+            
+        Perl_sharedsv_share(aTHX_ myref);
 
-        ENTER;
-        SAVETMPS;
-
-        PUSHMARK(SP);
-        XPUSHs(sv_2mortal(newRV_inc(myref)));
-        PUTBACK;
-
-        call_pv( "threads::shared::_share",G_DISCARD );
-
-        FREETMPS;
-        LEAVE;
-        RETVAL = newRV_inc(myref);
-    OUTPUT:
-        RETVAL
-
-#----------------------------------------------------------------------
-#  IN: 1 any variable (scalar,array,hash,glob)
-# OUT: 1 reference to that variable
-
-SV*
-share_disabled(SV *myref)
-    PROTOTYPE: \[$@%]
-    CODE:
-        myref = SvRV(myref);
-        if(SvROK(myref))
-            myref = SvRV(myref);
         RETVAL = newRV_inc(myref);
     OUTPUT:
         RETVAL
@@ -119,6 +162,8 @@ lock(SV *myref)
 
         LEAVE;
 
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to lock needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
@@ -154,20 +199,14 @@ lock(SV *myref)
 #      2 any variable (scalar,array,hash,glob) -- lock variable
 
 void
-cond_wait(SV *myref, ...)
+cond_wait(SV *myref, SV *myref2 = 0)
     PROTOTYPE: \[$@%];\[$@%]
-    PREINIT:
-        SV *myref2;
     CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to cond_wait needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
-        if (items > 1)
-        {
-            myref2 = SvRV(ST(1));
-            if(SvROK(myref2))
-                myref2 = SvRV(myref2);
-        }
         
         ENTER;
         SAVETMPS;
@@ -175,8 +214,15 @@ cond_wait(SV *myref, ...)
         PUSHMARK(SP);
         XPUSHs(sv_2mortal(newSVpv("_wait",0)));
         XPUSHs(sv_2mortal(newRV_inc(myref)));
-        if (items > 1)
+        if (myref2 && myref != myref2)
+        {
+            if (!SvROK(myref2))
+                Perl_croak(aTHX_ "cond_wait lock needs to be passed as ref");
+            myref2 = SvRV(myref2);
+            if(SvROK(myref2))
+                myref2 = SvRV(myref2);
             XPUSHs(sv_2mortal(newRV_inc(myref2)));
+        }
         PUTBACK;
 
         call_pv( "threads::shared::_remote",G_DISCARD );
@@ -189,24 +235,19 @@ cond_wait(SV *myref, ...)
 #      2 epoch time of event expiration
 #      3 any variable (scalar,array,hash,glob) -- lock variable
 
-bool
-cond_timedwait(SV *myref, double epochts, ...)
+int
+cond_timedwait(SV *myref, double epochts, SV *myref2 = 0)
     PROTOTYPE: \[$@%]$;\[$@%]
     PREINIT:
-        SV *myref2;
         int count;
         bool retval;
         U32 ordinal;
     CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to cond_timedwait needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
-        if (items > 2)
-        {
-            myref2 = SvRV(ST(2));
-            if(SvROK(myref2))
-                myref2 = SvRV(myref2);
-        }
 
         ENTER;
         SAVETMPS;
@@ -215,8 +256,15 @@ cond_timedwait(SV *myref, double epochts, ...)
         XPUSHs(sv_2mortal(newSVpv("_timedwait",0)));
         XPUSHs(sv_2mortal(newRV_inc(myref)));
         XPUSHs(sv_2mortal(newSVnv(epochts)));
-        if (items > 2)
+        if (myref2 && myref != myref2)
+        {
+            if (!SvROK(myref2))
+                Perl_croak(aTHX_ "cond_wait lock needs to be passed as ref");
+            myref2 = SvRV(myref2);
+            if(SvROK(myref2))
+                myref2 = SvRV(myref2);
             XPUSHs(sv_2mortal(newRV_inc(myref2)));
+        }
         PUTBACK;
 
         count = call_pv( "threads::shared::_remote",G_ARRAY );
@@ -232,6 +280,8 @@ cond_timedwait(SV *myref, double epochts, ...)
         FREETMPS;
         LEAVE;
         RETVAL = retval;
+        if (RETVAL == 0)
+            XSRETURN_UNDEF;
     OUTPUT:
         RETVAL
 
@@ -242,6 +292,8 @@ void
 cond_signal(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to cond_signal needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
@@ -266,6 +318,8 @@ void
 cond_broadcast(SV *myref)
     PROTOTYPE: \[$@%]
     CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to cond_broadcast needs to be passed as ref");
         myref = SvRV(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
@@ -339,8 +393,44 @@ bless(SV *myref, ...)
         LEAVE;
 
 #----------------------------------------------------------------------
+#  IN: 1 any variable (scalar,array,hash,glob)
+
+UV
+_id(SV *myref)
+    PROTOTYPE: \[$@%]
+    PREINIT:
+        UV retval;
+    CODE:
+        if (!SvROK(myref))
+            Perl_croak(aTHX_ "Argument to _id needs to be passed as ref");
+        myref = SvRV(myref);
+        if(SvROK(myref))
+            myref = SvRV(myref);
+
+        ENTER;
+        SAVETMPS;
+
+        PUSHMARK(SP);
+        XPUSHs(sv_2mortal(newRV_inc(myref)));
+        PUTBACK;
+
+        call_pv( "threads::shared::__id",G_SCALAR );
+
+        SPAGAIN;
+
+        retval = POPi;
+        PUTBACK;
+
+        FREETMPS;
+        LEAVE;
+        RETVAL = retval;
+    OUTPUT:
+        RETVAL
+
+#----------------------------------------------------------------------
 
 BOOT:
 {
     MY_CXT_INIT;
+    Perl_sharedsv_init(aTHX);
 }

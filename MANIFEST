@@ -4,6 +4,7 @@ forks.xs
 lib/forks.pm
 lib/forks/shared.pm
 lib/forks/shared/attributes.pm
+lib/forks/shared/global_filter.pm
 lib/forks/signals.pm
 lib/threads/shared/array.pm
 lib/threads/shared/handle.pm
@@ -24,6 +25,8 @@ t/forks04.t
 t/forks05.t
 t/forks06.t
 t/forks07.t
+t/forks08.t
+t/forks09.t
 t/forks20.t
 t/forks99.t
 TODO

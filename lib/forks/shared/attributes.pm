@@ -1,21 +1,17 @@
 package
     forks::shared::attributes; #hide from PAUSE
-$VERSION = '0.27';
-    
+$VERSION = '0.28';
+
 use Attribute::Handlers;
 
-
-#package
-#    Attribute::Handlers;
-#    
-#$Attribute::Handlers::builtin =
-#    $Attribute::Handlers::builtin = qr/lvalue|method|locked|unique/;
-
+# Required for perl < 5.8.0; 5.8+ corrects bug in attribute handling that
+# allowed internal 'shared' attribute to "slip" through and be passed to the
+# Attribute::Handler.
 
 package 
     UNIVERSAL; #hide from PAUSE
 
-# Overload 'shared' attribute
+# Overload 'shared' attribute (required due to a bug in attributes < 0.7)
 
 sub shared : ATTR(VAR) {
     my ($package, $symbol, $referent, $attr, $data, $phase) = @_;
@@ -23,7 +19,8 @@ sub shared : ATTR(VAR) {
     threads::shared::_share( $referent );
 }
 
-# Special case for perl 5.9.0 and later source filter, for 'shared' attribute
+# Declare special attribute name to suppress warning: "Declaration of shared
+# attribute in package UNIVERSAL may clash with future reserved word"
 
 sub Forks_shared : ATTR(VAR) {
     my ($package, $symbol, $referent, $attr, $data, $phase) = @_;

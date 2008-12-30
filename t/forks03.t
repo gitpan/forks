@@ -20,6 +20,34 @@ The following tests check that blessing shared variables is fully transparent.
 
 EOD
 
+# "Unpatch" Test::More, who internally tries to disable threads
+BEGIN {
+    no warnings 'redefine';
+    if ($] < 5.008001) {
+        require forks::shared::global_filter;
+        import forks::shared::global_filter 'Test::Builder';
+        require Test::Builder;
+        *Test::Builder::share = \&threads::shared::share;
+        *Test::Builder::lock = \&threads::shared::lock;
+        Test::Builder->new->reset;
+    }
+}
+
+# Patch Test::Builder to add fork-thread awareness
+{
+    no warnings 'redefine';
+    my $_sanity_check_old = \&Test::Builder::_sanity_check;
+    *Test::Builder::_sanity_check = sub {
+        my $self = $_[0];
+        # Don't bother with an ending if this is a forked copy.  Only the parent
+        # should do the ending.
+        if( $self->{Original_Pid} != $$ ) {
+            return;
+        }
+        $_sanity_check_old->(@_);
+    };
+}
+
 use Test::More tests => 64;
 use strict;
 use warnings;

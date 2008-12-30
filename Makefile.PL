@@ -29,8 +29,6 @@ if ($] < 5.008) { # no complex prototypes before 5.8.0, we need to filter also
     @from = @to;
     @to = @from_tmp;
     push @extra_prereq,qw(Filter::Util::Call 0);
-} elsif ($] >= 5.009) { # 5.9.0 and later requires filter to support 'shared' variable attribute
-    push @extra_prereq,qw(Filter::Util::Call 0);
 }
 
 warn "Fixing prototypes in $old\n";
@@ -125,10 +123,13 @@ WriteMakefile (
             Devel::Required     0.07
             List::MoreUtils     0.15
             File::Spec          0
+            if                  0
             IO::Socket          1.18
             Scalar::Util        1.09
             Storable            0
+            Test::More          0
             Time::HiRes         0
                 )},
+#            Sys::SigAction      0.10
 (MM->can('signature_target') ? (SIGN => 1) : ()),
 );

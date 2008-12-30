@@ -4,11 +4,11 @@
 /*
 ----------------------------------------------------------------------
 
-    ppport.h -- Perl/Pollution/Portability Version 3.12
+    ppport.h -- Perl/Pollution/Portability Version 3.14
 
     Automatically created by Devel::PPPort running under perl 5.008008.
 
-    Version 3.x, Copyright (c) 2004-2007, Marcus Holland-Moritz.
+    Version 3.x, Copyright (c) 2004-2008, Marcus Holland-Moritz.
 
     Version 2.x, Copyright (C) 2001, Paul Marquess.
 
@@ -23,8 +23,8 @@ SKIP
 if (@ARGV && $ARGV[0] eq '--unstrip') {
   eval { require Devel::PPPort };
   $@ and die "Cannot require Devel::PPPort, please install.\n";
-  if ($Devel::PPPort::VERSION < 3.12) {
-    die "ppport.h was originally generated with Devel::PPPort 3.12.\n"
+  if ($Devel::PPPort::VERSION < 3.14) {
+    die "ppport.h was originally generated with Devel::PPPort 3.14.\n"
       . "Your Devel::PPPort is only version $Devel::PPPort::VERSION.\n"
       . "Please install a newer version, or --unstrip will not work.\n";
   }
@@ -568,11 +568,6 @@ typedef NVTYPE NV;
 #ifndef ERRSV
 #define ERRSV get_sv("@",FALSE)
 #endif
-#ifndef newSVpvn
-#define newSVpvn(data,len) ((data) \
-? ((len) ? newSVpv((data), (len)) : newSVpv("", 0)) \
-: newSV(0))
-#endif
 #ifndef gv_stashpvn
 #define gv_stashpvn(str,len,create) gv_stashpv(str,create)
 #endif
@@ -657,7 +652,7 @@ extern U32 DPPP_(my_PL_signals);
 #endif
 #define PL_signals DPPP_(my_PL_signals)
 #endif
-#if (PERL_BCDVERSION <= 0x5005004)
+#if (PERL_BCDVERSION <= 0x5005005)
 #define PL_ppaddr ppaddr
 #define PL_no_modify no_modify
 #endif
@@ -741,35 +736,41 @@ extern U32 DPPP_(my_PL_signals);
 #ifndef dTHXoa
 #define dTHXoa(x) dTHXa(x)
 #endif
+#ifndef mPUSHs
+#define mPUSHs(s) PUSHs(sv_2mortal(s))
+#endif
 #ifndef PUSHmortal
 #define PUSHmortal PUSHs(sv_newmortal())
 #endif
 #ifndef mPUSHp
-#define mPUSHp(p,l) sv_setpvn_mg(PUSHmortal, (p), (l))
+#define mPUSHp(p,l) sv_setpvn(PUSHmortal, (p), (l))
 #endif
 #ifndef mPUSHn
-#define mPUSHn(n) sv_setnv_mg(PUSHmortal, (NV)(n))
+#define mPUSHn(n) sv_setnv(PUSHmortal, (NV)(n))
 #endif
 #ifndef mPUSHi
-#define mPUSHi(i) sv_setiv_mg(PUSHmortal, (IV)(i))
+#define mPUSHi(i) sv_setiv(PUSHmortal, (IV)(i))
 #endif
 #ifndef mPUSHu
-#define mPUSHu(u) sv_setuv_mg(PUSHmortal, (UV)(u))
+#define mPUSHu(u) sv_setuv(PUSHmortal, (UV)(u))
+#endif
+#ifndef mXPUSHs
+#define mXPUSHs(s) XPUSHs(sv_2mortal(s))
 #endif
 #ifndef XPUSHmortal
 #define XPUSHmortal XPUSHs(sv_newmortal())
 #endif
 #ifndef mXPUSHp
-#define mXPUSHp(p,l) STMT_START { EXTEND(sp,1); sv_setpvn_mg(PUSHmortal, (p), (l)); } STMT_END
+#define mXPUSHp(p,l) STMT_START { EXTEND(sp,1); sv_setpvn(PUSHmortal, (p), (l)); } STMT_END
 #endif
 #ifndef mXPUSHn
-#define mXPUSHn(n) STMT_START { EXTEND(sp,1); sv_setnv_mg(PUSHmortal, (NV)(n)); } STMT_END
+#define mXPUSHn(n) STMT_START { EXTEND(sp,1); sv_setnv(PUSHmortal, (NV)(n)); } STMT_END
 #endif
 #ifndef mXPUSHi
-#define mXPUSHi(i) STMT_START { EXTEND(sp,1); sv_setiv_mg(PUSHmortal, (IV)(i)); } STMT_END
+#define mXPUSHi(i) STMT_START { EXTEND(sp,1); sv_setiv(PUSHmortal, (IV)(i)); } STMT_END
 #endif
 #ifndef mXPUSHu
-#define mXPUSHu(u) STMT_START { EXTEND(sp,1); sv_setuv_mg(PUSHmortal, (UV)(u)); } STMT_END
+#define mXPUSHu(u) STMT_START { EXTEND(sp,1); sv_setuv(PUSHmortal, (UV)(u)); } STMT_END
 #endif
 #ifndef call_sv
 #define call_sv perl_call_sv
@@ -1049,7 +1050,7 @@ sv_setuv(my_cxt_sv, PTR2UV(my_cxtp))
 #endif
 #ifndef NVef
 #if defined(USE_LONG_DOUBLE) && defined(HAS_LONG_DOUBLE) && \
-defined(PERL_PRIfldbl)
+defined(PERL_PRIfldbl) && (PERL_BCDVERSION != 0x5006000)
 #define NVef PERL_PRIeldbl
 #define NVff PERL_PRIfldbl
 #define NVgf PERL_PRIgldbl
@@ -1123,6 +1124,39 @@ if (_sv) \
 #endif
 #ifndef SvREFCNT_inc_simple_void_NN
 #define SvREFCNT_inc_simple_void_NN(sv) (void)(++SvREFCNT((SV*)(sv)))
+#endif
+#ifndef newSVpvn
+#define newSVpvn(data,len) ((data) \
+? ((len) ? newSVpv((data), (len)) : newSVpv("", 0)) \
+: newSV(0))
+#endif
+#ifndef newSVpvn_utf8
+#define newSVpvn_utf8(s, len, u) newSVpvn_flags((s), (len), (u) ? SVf_UTF8 : 0)
+#endif
+#ifndef SVf_UTF8
+#define SVf_UTF8 0
+#endif
+#ifndef newSVpvn_flags
+#if defined(NEED_newSVpvn_flags)
+static SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char * s, STRLEN len, U32 flags);
+static
+#else
+extern SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char * s, STRLEN len, U32 flags);
+#endif
+#ifdef newSVpvn_flags
+#undef newSVpvn_flags
+#endif
+#define newSVpvn_flags(a,b,c) DPPP_(my_newSVpvn_flags)(aTHX_ a,b,c)
+#define Perl_newSVpvn_flags DPPP_(my_newSVpvn_flags)
+#if defined(NEED_newSVpvn_flags) || defined(NEED_newSVpvn_flags_GLOBAL)
+SV *
+DPPP_(my_newSVpvn_flags)(pTHX_ const char *s, STRLEN len, U32 flags)
+{
+SV *sv = newSVpvn(s, len);
+SvFLAGS(sv) |= (flags & SVf_UTF8);
+return (flags & SVs_TEMP) ? sv_2mortal(sv) : sv;
+}
+#endif
 #endif
 #if !defined(NEED_sv_2pv_flags) && defined(NEED_sv_2pv_nolen)
 #define NEED_sv_2pv_flags
@@ -1236,6 +1270,11 @@ return sv_pvn_force(sv, lp ? lp : &n_a);
 }
 #endif
 #endif
+#if (PERL_BCDVERSION < 0x5008008) || ( (PERL_BCDVERSION >= 0x5009000) && (PERL_BCDVERSION < 0x5009003) )
+#define DPPP_SVPV_NOLEN_LP_ARG &PL_na
+#else
+#define DPPP_SVPV_NOLEN_LP_ARG 0
+#endif
 #ifndef SvPV_const
 #define SvPV_const(sv, lp) SvPV_flags_const(sv, lp, SV_GMAGIC)
 #endif
@@ -1257,7 +1296,7 @@ return sv_pvn_force(sv, lp ? lp : &n_a);
 #define SvPV_flags_const_nolen(sv, flags) \
 ((SvFLAGS(sv) & (SVf_POK)) == SVf_POK \
 ? SvPVX_const(sv) : \
-(const char*) sv_2pv_flags(sv, 0, flags|SV_CONST_RETURN))
+(const char*) sv_2pv_flags(sv, DPPP_SVPV_NOLEN_LP_ARG, flags|SV_CONST_RETURN))
 #endif
 #ifndef SvPV_flags_mutable
 #define SvPV_flags_mutable(sv, lp, flags) \
@@ -1288,7 +1327,7 @@ sv_2pv_flags(sv, &lp, flags|SV_MUTABLE_RETURN))
 #ifndef SvPV_force_flags_nolen
 #define SvPV_force_flags_nolen(sv, flags) \
 ((SvFLAGS(sv) & (SVf_POK|SVf_THINKFIRST)) == SVf_POK \
-? SvPVX(sv) : sv_pvn_force_flags(sv, 0, flags))
+? SvPVX(sv) : sv_pvn_force_flags(sv, DPPP_SVPV_NOLEN_LP_ARG, flags))
 #endif
 #ifndef SvPV_force_flags_mutable
 #define SvPV_force_flags_mutable(sv, lp, flags) \
@@ -1299,12 +1338,12 @@ sv_2pv_flags(sv, &lp, flags|SV_MUTABLE_RETURN))
 #ifndef SvPV_nolen
 #define SvPV_nolen(sv) \
 ((SvFLAGS(sv) & (SVf_POK)) == SVf_POK \
-? SvPVX(sv) : sv_2pv_flags(sv, 0, SV_GMAGIC))
+? SvPVX(sv) : sv_2pv_flags(sv, DPPP_SVPV_NOLEN_LP_ARG, SV_GMAGIC))
 #endif
 #ifndef SvPV_nolen_const
 #define SvPV_nolen_const(sv) \
 ((SvFLAGS(sv) & (SVf_POK)) == SVf_POK \
-? SvPVX_const(sv) : sv_2pv_flags(sv, 0, SV_GMAGIC|SV_CONST_RETURN))
+? SvPVX_const(sv) : sv_2pv_flags(sv, DPPP_SVPV_NOLEN_LP_ARG, SV_GMAGIC|SV_CONST_RETURN))
 #endif
 #ifndef SvPV_nomg
 #define SvPV_nomg(sv, lp) SvPV_flags(sv, lp, 0)
@@ -1721,6 +1760,9 @@ warn("%s", SvPV_nolen(sv));
 #endif
 #ifndef newSVpvs
 #define newSVpvs(str) newSVpvn(str "", sizeof(str) - 1)
+#endif
+#ifndef newSVpvs_flags
+#define newSVpvs_flags(str, flags) newSVpvn_flags(str "", sizeof(str) - 1, flags)
 #endif
 #ifndef sv_catpvs
 #define sv_catpvs(sv, str) sv_catpvn(sv, str "", sizeof(str) - 1)
