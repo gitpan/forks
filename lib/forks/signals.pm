@@ -1,193 +1,13 @@
 package
     forks::signals; #hide from PAUSE
-$VERSION = '0.28';
+$VERSION = '0.29';
 
 use strict;
 use warnings;
 use Carp ();
 use vars qw($sig %usersig);
 use List::MoreUtils;
-#use Sys::SigAction qw(set_sig_handler);
-
-# Had to duplicate Sys::SigAction 0.10 just to fix safe handling...
-
-#
-#   Sys::SigAction
-#   Copyright (c) 2004 Lincoln A. Baxter
-#
-#   You may distribute under the terms of either the GNU General Public
-#   License or the Artistic License, as specified in the Perl README file,
-#   with the exception that it cannot be placed on a CD-ROM or similar media
-#   for commercial distribution without the prior approval of the author.
-{
-package
-    forks::signals::Sys::SigAction; #hide from PAUSE
-require 5.005;
-use strict;
-#use warnings;
-use POSIX ':signal_h' ;
-require Exporter;
-use vars qw( $VERSION @ISA @EXPORT_OK %EXPORT_TAGS );
-
-#use Data::Dumper;
-
-@ISA = qw( Exporter );
-@EXPORT_OK = qw( set_sig_handler timeout_call sig_name sig_number );
-$VERSION = '0.10';
-
-use Config;
-my %signame = ();
-my %signo = ();
-{
-   defined $Config{sig_name} or die "This OS does not support signals?";
-   my $i = 0;     # Config prepends fake 0 signal called "ZERO".
-   my @numbers = split( ' ' ,$Config{sig_num} );
-   foreach my $name (split(' ', $Config{sig_name})) 
-   {
-      $signo{$name} = $numbers[$i];
-      $signame{$signo{$name}} = $name;
-      #print "name=$name num=" .$numbers[$i] ."\n" ;
-      $i++;
-   }
-}
-
-sub sig_name {
-   my ($sig) = @_;
-   return $sig if $sig !~ m/^\d+$/ ;
-   return $signame{$sig} ;
-}
-sub sig_number {
-   my ($sig) = @_;
-   return $sig if $sig =~ m/^\d+$/;
-   return $signo{$sig} ;
-}
-#if ( $] < 5008 ) {
-#   #over write definitions of sig_name and sig_number
-#   sub sig_name { warn "sig_name() not supported on perl versions < 5.8.0"; }
-#   sub sig_number { warn "sig_number() not supported on perl versions < 5.8.0"; }
-#}
-
-my $use_sigaction = ( $] >= 5.008 and $Config{d_sigaction} );
-
-sub _attrs_warning($)
-{
-   my ( $attrs ) =  @_ ;
-   #my $act =  POSIX::SigAction->new( $handler ,$mask ,$attrs->{flags} ,$attrs->{safe} );
-   #steve ( SPURKIS@cpan.org submitted  http://rt.cpan.org/Ticket/Display.html?id=19916 
-   #  puts out the above liin is a mis-interpretation of the API for POSIX::SigAcation
-   #  so here is the fix (per his suggestion)... lab:
-   #
-   #http://rt.cpan.org/Public/Bug/Display.html?id=21777
-   #2006-09-29: in perl 5.8.0 (RH) $act->safe() is broken 
-   #            safe is not available until 5.8.2
-   #            DAMN... it was in my docs too... 
-   if ( exists( $attrs->{safe} ) )
-   {
-      if ( ( $] < 5.008002 ) && defined($attrs->{safe}) && $attrs->{safe} ) 
-      {
-         warn "safe mode is not supported in perl versions less than 5.8.2";
-         delete $attrs->{safe};
-      }
-   }
-
-}
-sub set_sig_handler( $$;$$ )
-{
-   my ( $sig ,$handler ,$attrs ) = @_;      
-   $attrs = {} if not defined $attrs;
-   _attrs_warning($attrs);
-   if ( not $use_sigaction )
-   {
-      #warn '$flags not supported in perl versions < 5.8' if $] < 5.008 and defined $flags;
-      $sig = sig_name( $sig );
-      my $ohandler = $SIG{$sig};
-      $SIG{$sig} = $handler;
-      return if not defined wantarray;
-      return forks::signals::Sys::SigAction->new( $sig ,$ohandler );
-   }
-   my $act = mk_sig_action( $handler ,$attrs );
-   return set_sigaction( sig_number($sig) ,$act );
-}
-sub mk_sig_action($$)
-{
-   my ( $handler ,$attrs ) = @_;      
-   die 'mk_sig_action requires perl 5.8.0 or later' if $] < 5.008;
-   $attrs->{flags} = 0 if not defined $attrs->{flags};
-   $attrs->{mask} = [] if not defined $attrs->{mask};
-   #die '$sig is not defined' if not defined $sig;
-   #$sig = sig_number( $sig );
-   my @siglist = ();
-   foreach (@{$attrs->{mask}}) { push( @siglist ,sig_number($_)); };
-   my $mask = POSIX::SigSet->new( @siglist );
-
-   my $act =  POSIX::SigAction->new( $handler ,$mask ,$attrs->{flags} ); 
-   $act->safe($attrs->{safe}) if defined $attrs->{safe};
-   return $act;
-}
-
-
-sub set_sigaction($$)
-{ 
-   my ( $sig ,$action  ) = @_;
-   die 'set_sigaction() requires perl 5.8.0 or later' if $] < 5.008;
-   die '$sig is not defined' if not defined $sig;
-   die '$action is not a POSIX::SigAction' if not UNIVERSAL::isa( $action ,'POSIX::SigAction' );
-   $sig = sig_number( $sig );
-   if ( defined wantarray )
-   {
-      my $oact = POSIX::SigAction->new();
-      sigaction( $sig ,$action ,$oact );
-      return forks::signals::Sys::SigAction->new( $sig ,$oact );
-   }
-   else
-   {
-      sigaction( $sig ,$action );
-   }
-}
-
-use constant TIMEDOUT => {};
-sub timeout_call( $$;$ )
-{
-   my ( $timeout ,$code ) = @_;
-   my $timed_out = 0;
-   my $ex;
-   eval {
-      #lab-20060625 unecessary: my $h = sub { $timed_out = 1; die TIMEDOUT; };
-      my $sa = set_sig_handler( SIGALRM ,sub { $timed_out = 1; die TIMEDOUT; } );
-      alarm( $timeout );
-      &$code; 
-      alarm(0);
-   };
-   alarm(0);
-   if ($@)
-   {
-      #print "$@\n" ;
-      die $@ if not ref $@;
-      die $@ if $@ != TIMEDOUT;
-   }
-   return $timed_out;
-}
-sub new {
-   my ($class,$sig,$act) = @_;
-   bless { SIG=>$sig ,ACT => $act } ,$class ;
-}
-sub DESTROY 
-{
-   if ( $use_sigaction )
-   {
-      set_sigaction( $_[0]->{'SIG'} ,$_[0]->{'ACT'} );
-   }
-   else
-   {
-      #set it to default if not defined (suppress undefined warning)
-      $SIG{$_[0]->{'SIG'}} = defined $_[0]->{'ACT'} ? $_[0]->{'ACT'} : 'DEFAULT' ;
-   }
-   return;
-}
-}
-
-package
-    forks::signals; #hide from PAUSE
+use Sys::SigAction qw(set_sig_handler);
 
 # Declare private package variables
 
@@ -291,7 +111,7 @@ sub _STORE    {
 
     if (defined $flags && ref($sig->{$k}) eq 'CODE') {
         untie %SIG;
-        forks::signals::Sys::SigAction::set_sig_handler($k, $sig->{$k}, {
+        set_sig_handler($k, $sig->{$k}, {
             flags => $flags,
             safe  => $] < 5.008002 ? 0 : 1
         });

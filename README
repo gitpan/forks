@@ -1,7 +1,7 @@
 README for forks
 
 Version:
- 0.28
+ 0.29
 
 The forks.pm module is a drop-in replacement for threads.pm.  It has the
 same syntax as the threads.pm module (it even takes over its namespace) but
@@ -30,8 +30,9 @@ Required Modules:
  if (any)
  IO::Socket (1.18)
  List::MoreUtils (0.15)
- Scalar::Util (1.09)
+ Scalar::Util (1.11)
  Storable (any)
+ Sys::SigAction (0.11)
  Test::More (any)
  Time::HiRes (any)
 

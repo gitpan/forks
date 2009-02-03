@@ -259,7 +259,7 @@ cond_timedwait(SV *myref, double epochts, SV *myref2 = 0)
         if (myref2 && myref != myref2)
         {
             if (!SvROK(myref2))
-                Perl_croak(aTHX_ "cond_wait lock needs to be passed as ref");
+                Perl_croak(aTHX_ "cond_timedwait lock needs to be passed as ref");
             myref2 = SvRV(myref2);
             if(SvROK(myref2))
                 myref2 = SvRV(myref2);
@@ -404,6 +404,8 @@ _id(SV *myref)
         if (!SvROK(myref))
             Perl_croak(aTHX_ "Argument to _id needs to be passed as ref");
         myref = SvRV(myref);
+        if (SvMAGICAL(myref))
+            mg_get(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
 

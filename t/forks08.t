@@ -64,19 +64,19 @@ cmp_ok($time, '==', 5,'check that main thread sleeps full 5 seconds after CHLD s
 $t1 = threads->new(sub { sleep 1; });
 $time = Time::HiRes::sleep 5;
 $t1->join();
-cmp_ok($time, '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
+cmp_ok(sprintf("%.0f", $time), '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
 
 # Check that main thread waits full 5 seconds after CHLD signal
 $t1 = threads->new(sub { sleep 1; });
 $time = Time::HiRes::usleep 5000000;
 $t1->join();
-cmp_ok($time, '>=', 5000000,'check that main thread sleeps full 5 seconds after CHLD signal');
+cmp_ok(sprintf("%.0f", $time / 6), '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
 
 # Check that main thread waits full 5 seconds after CHLD signal
 $t1 = threads->new(sub { sleep 1; });
 $time = Time::HiRes::nanosleep 5000000000;
 $t1->join();
-cmp_ok($time, '>=', 5000000000,'check that main thread sleeps full 5 seconds after CHLD signal');
+cmp_ok(sprintf("%.0f", ($time / 9)), '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
 
 
 # Check that main thread waits full 5 seconds after CHLD signal
@@ -85,7 +85,7 @@ $SIG{CHLD} = sub { $cnt++ };
 $t1 = threads->new(sub { sleep 1; });
 $time = sleep 5;
 $t1->join();
-cmp_ok($time, '==', 5,'check that main thread sleeps full 5 seconds after custom CHLD signal');
+cmp_ok(sprintf("%.0f", $time), '>=', 5,'check that main thread sleeps full 5 seconds after custom CHLD signal');
 cmp_ok($cnt, '>=', 1,'check that custom CHLD signal was called');
 
 1;

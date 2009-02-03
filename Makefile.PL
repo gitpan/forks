@@ -66,7 +66,7 @@ unless ($Config::Config{useithreads}) {
             ."\nWould you like to create references to forks, such that\n"
             ."using 'use threads' and 'use threads::shared' will quietly\n"
             ."load forks and forks::shared? [no] ";
-        if (<STDIN> =~ /^y(?:es)?$/) {
+        if (<STDIN> =~ /^y(?:es)?$/i) {
             $simulate_useithreads = 1;
             print "\n";
             print "NOTE: Be sure to 'make install UNINST=1' when installing\n"
@@ -110,6 +110,23 @@ require ExtUtils::MM_Unix;
     };
 }
 
+my $storable_min_version = 0;
+if (eval{require Storable; $Storable::VERSION < 2.05}) {
+    my $isa_tty = -t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT));
+    if ($isa_tty) {
+        print "\nYou have Storable version $Storable::VERSION, but version\n"
+            ."2.05 or later is required to be able to store CODE refs in\n"
+            ."forks::shared shared variables.  Do you wish to install a more\n"
+            ."recent version of Storable at this time? [no] ";
+        if (<STDIN> =~ /^y(?:es)?$/i) {
+            $storable_min_version = 2.05;
+            print "\nStorable 2.05 will be added to list of install requirements.\n";
+            print "\n";
+        }
+    }
+
+}
+
 ### Standard MakeMaker Makefile.PL directives ###
 package main;
 WriteMakefile (
@@ -125,11 +142,11 @@ WriteMakefile (
             File::Spec          0
             if                  0
             IO::Socket          1.18
-            Scalar::Util        1.09
-            Storable            0
+            Scalar::Util        1.11
+            Storable            ), $storable_min_version, qw(
+            Sys::SigAction      0.11
             Test::More          0
             Time::HiRes         0
                 )},
-#            Sys::SigAction      0.10
 (MM->can('signature_target') ? (SIGN => 1) : ()),
 );

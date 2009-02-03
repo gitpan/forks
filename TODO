@@ -3,7 +3,7 @@
 optimizations:
 - support alternate, faster locking mechanisms (filesystem and/or SysV shmem)
 - allow for shared memory as transport medium
-	- current alternative is to use BerkeleyDB, e.g. forks::BerkeleyDB
+    - current alternative is to use BerkeleyDB, e.g. forks::BerkeleyDB
 - implement more methods using custom filters (to reduce Storable usage)
 
 Make thread objects shared in nature, such that their properties may be read
@@ -19,6 +19,10 @@ file descriptors (for additional security control).
 
 
 ***** Issues to Address *****
+
+Need to load internally cached, shared REF values from server, not from first use
+to insure that values are correctly loaded, to insure they correctly evaluate when
+used in is_shared(). (TODO temp patch seen in t/forks09.t)
 
 CLONE_SKIP needs to be aware of packages that aren't in %INC.  Same goes for CLONE.
 (Maybe use http://search.cpan.org/~gslondon/Symbol-Table-1.01/Table.pm#Hash_Keys)
@@ -87,8 +91,9 @@ forks 0.25, so may be resolved.
 
 ***** Miscellaneous Items *****
 
-Hopefully, a future release of Sys::SigAction (>0.10) will correctly handle the
-'safe' sigaction attribute so we can removed the inline the module code.
+sleep() can sleep too long if woken by many forks-related signals (mainly CHLD).
+Would be more precise if sleep time could be tracked as floating point rather
+than integer, like hi-res versions of the function.
 
 Consider checking _check_pl_signal_unsafe_flag for any thread signaling behavior,
 and warn user about (or prevent from using) signals (i.e. deadlock detect, $t->kill).
@@ -96,6 +101,32 @@ and warn user about (or prevent from using) signals (i.e. deadlock detect, $t->k
 Allow manual disabling of forks.pm signal management (for embedding with other
 pragmas or interfaces that implement their own signals management, such as mod_perl
 via Apache::forks).
+
+Need a way to keep deserialized shared variable references consistent between
+lookups, e.g.
+    my $shared :shared = &share({});
+    $$shared{'foo'} = 'bar';
+    my $str1 = "$shared";
+    my $str2 = "$shared";
+    ok($str1 eq $str2, 'stringify');
+This is a side-effect of Storable, which reconstitutes a new tied hash each time
+FETCH returns a shared variable.
+This might be solved with overload.pm, although documentation indicates that it
+may not work with Storable since we're masking the master package in a different
+file (Storable uses XS load_module, which tries to load real threads/shared.pm even
+though %INC is populated).  (I wonder if it's possible to fake out load_module?)
+Thus, maybe we can implement a thread-local reference cache for all shared
+variables (dynamically populated as they are FETCHed), which returns the
+thread-local copy instead of the server copy.  (Same idea as forks::BerkeleyDB,
+but caching the server copy instead.)  Benefit to this method is that ref()
+and refaddr() will return the same results, although won't return the same value
+as is_shared() unless we change this to use the same logic.
+UPDATE: we need to get away from the caching mechanism, or somehow have logic
+that resolves REF types (before or in) the shared server such that it returns
+a shared variable to the code.  The code itself should be able to know the following:
+1. when a REF is a shared variable
+2. when a REF has changed in the shared process, we need to make sure all child threads
+that have a reference to it are correctly updated.
 
 Enable custom concurrent lock interface to support optimized locking mechanisms;
 specifically, SysV semaphores, filesystem (+alarm/ALRM), or other possibilities.
@@ -118,6 +149,8 @@ blockable).
 
 Add recursive lock tests with cond_* (to test that recursive locks are
 correctly acquired and released).
+
+Add tests to validate that storing CODE refs in shared variables works.
 
 Add documentation explaining that forks installs a SIGCHLD handler by default,
 and that system calls in your user code may be interrupted by this handler

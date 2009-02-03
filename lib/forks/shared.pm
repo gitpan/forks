@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.28';
+$VERSION = '0.29';
 
 use Config ();
 
@@ -35,7 +35,7 @@ package
 # Do everything by the book from now on
 
 BEGIN {
-    $VERSION  = '1.26';
+    $VERSION  = '1.27';
     $threads_shared = $threads_shared = 1;
 }
 use strict;
@@ -103,12 +103,14 @@ if ($forks::threads || $forks::threads) { # twice to avoid warnings
 # Whether to retain existing variable content during tie to threads::shared::* modules
 # Local cache of self-referential circular references (pertie workaround): tied obj => REF
 # Reverse lookup of local thread cache of self-referential circular references
+# Thread-local cache of shared variable tied primitives
 
 our $CLONE = 0;
 our %LOCKED;
 our $CLONE_TIED = !eval {forks::THREADS_NATIVE_EMULATION()};
 our %CIRCULAR;
 our %CIRCULAR_REVERSE;
+our %SHARED_CACHE;
 
 # If Perl 5.8 or later core doesn't include required internal hooks (possibly compiled out)
 #  Force suppressed 'shared' attribute to surface as 'Forks_shared' in Core attributes.pm
@@ -354,9 +356,15 @@ $make_shared = sub {
 
 #---------------------------------------------------------------------------
 
+# Purge the thread cache (to insure thread-local refaddr)
 # Increment the current clone value (mark this as a cloned version)
 
-sub CLONE { $CLONE++ } #CLONE
+sub CLONE {
+	%CIRCULAR = ();
+	%CIRCULAR_REVERSE = ();
+	%SHARED_CACHE = ();
+	$CLONE++;
+} #CLONE
 
 #---------------------------------------------------------------------------
 #  IN: 1 class for which to bless
@@ -395,12 +403,61 @@ sub TIEHASH { shift->_tie( 'hash',@_ ) } #TIEHASH
 
 sub TIEHANDLE { shift->_tie( 'handle',@_ ) } #TIEHANDLE
 
+#---------------------------------------------------------------------------
+#  IN: 1 perltie thawed value
+# OUT: 1..N output parameters
+sub _tied_filter {
+
+# Obtain the reference to the variable
+# Create the reference type of that reference
+# Return immediately if this isn't a reference
+
+    my $it  = shift;
+    my $ref = reftype $it;
+    return $it unless $ref;
+
+# Obtain the object
+#  Return immediately if isn't a threads::shared object (i.e. circular REF)
+
+    my $object;
+    if ($ref eq 'SCALAR') {
+        $object = tied ${$it};
+    } elsif ($ref eq 'ARRAY') {
+        $object = tied @{$it};
+    } elsif ($ref eq 'HASH') {
+        $object = tied %{$it};
+    } elsif ($ref eq 'GLOB') {
+        $object = tied *{$it};
+    } else {
+    	return $it;
+    }
+
+#  Get the ordinal
+#  If we already have a cached copy of this object
+#   Get the blessed class (if any)
+#   Save this as the return value
+#   Rebless local ref to insure its up-to-date with shared blessed state
+#  Else
+#   Cache this value
+# Return the (tied) value
+
+	my $ordinal = $object->{'ordinal'};
+	if (exists $SHARED_CACHE{$ordinal}) {
+		my $class = blessed($it);
+		CORE::bless($SHARED_CACHE{$ordinal}, $class) if $class;
+		$it = $SHARED_CACHE{$ordinal};
+	} else {
+		$SHARED_CACHE{$ordinal} = $it;
+	}
+	return $it;
+}
+
 # Define generic perltie proxy methods for most scalar, array, hash, and handle events
 
 BEGIN {
     no strict 'refs';
-    foreach my $method (qw/BINMODE CLEAR CLOSE DELETE EOF EXISTS EXTEND FETCHSIZE FILENO FIRSTKEY GETC
-        NEXTKEY OPEN POP PRINT PRINTF READ READLINE SCALAR SEEK SHIFT STORESIZE TELL UNSHIFT WRITE/) {
+    foreach my $method (qw/BINMODE CLEAR CLOSE EOF EXTEND FETCHSIZE FILENO GETC
+        OPEN POP PRINT PRINTF READ READLINE SCALAR SEEK SHIFT STORESIZE TELL UNSHIFT WRITE/) {
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -416,7 +473,38 @@ BEGIN {
 
             my $self = shift;
             my $sub = $self->{'module'}.'::'.$method;
-            my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+            my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,@_ );
+            wantarray ? @result : $result[0];
+        }
+    }
+}
+
+# Define perltie proxy methods for events used by a tied hash that use a hash key as first argument
+
+BEGIN {
+    no strict 'refs';
+    foreach my $method (qw/DELETE EXISTS FIRSTKEY NEXTKEY/) {
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2..N input parameters
+# OUT: 1..N output parameters
+
+        *$method = sub {
+
+# Obtain the object
+# Obtain the subroutine name
+# If we're a hash and the key is a code reference
+#  Force key stringification, to insure remote server uses same key value as thread
+# Handle the command with the appropriate data and obtain the result
+# Return whatever seems appropriate
+
+            my $self = shift;
+            my $sub = $self->{'module'}.'::'.$method;
+            if ($self->{'type'} eq 'hash' && ref($_[0]) eq 'CODE') {
+                $_[0] = "$_[0]";
+            }
+            my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,@_ );
             wantarray ? @result : $result[0];
         }
     }
@@ -438,7 +526,7 @@ sub PUSH {
 
     my $self = shift;
     my $sub = $self->{'module'}.'::PUSH';
-    my @result = _command( '_tied',$self->{'ordinal'},$sub,map($_, @_) );
+    my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,map($_, @_) );
     wantarray ? @result : $result[0];
 } #PUSH
 
@@ -472,11 +560,18 @@ sub STORE {
             unless defined $object && $object->isa('threads::shared');
     }
 
+# If we're a hash and the key is a code reference
+#  Force key stringification, to insure remote server uses same key value as thread
+
+    if ($self->{'type'} eq 'hash' && ref($_[0]) eq 'CODE') {
+        $_[0] = "$_[0]";
+    }
+
 # Handle the command with the appropriate data and obtain the result
 # Delete cached shared self-circular reference lookups, if exists and self is a tied scalar
 # Return whatever seems appropriate
 
-    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,@_ );
     delete $CIRCULAR_REVERSE{delete $CIRCULAR{$self}} if $self->{'type'} eq 'scalar' && exists $CIRCULAR{$self};
     wantarray ? @result : $result[0];
 } #STORE
@@ -490,6 +585,8 @@ sub FETCH {
 
 # Obtain the object
 # Obtain the subroutine name
+# If we're a hash and the key is a code reference
+#  Force key stringification, to insure remote server uses same key value as thread
 # Handle the command with the appropriate data and obtain the result
 # If this is a tied scalar and the remote value is a circular self-reference
 #  Return cached shared self-circular reference, if exists
@@ -501,7 +598,10 @@ sub FETCH {
 
     my $self = shift;
     my $sub = $self->{'module'}.'::FETCH';
-    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    if ($self->{'type'} eq 'hash' && ref($_[0]) eq 'CODE') {
+        $_[0] = "$_[0]";
+    }
+    my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,@_ );
     if ($self->{'type'} eq 'scalar' && ref($result[0]) eq 'REF'
         && ref(${$result[0]}) eq 'REF') {    #TODO: is this too simple?  Do we need to contact remote process?  Seems like we should at least do a refaddr equality check (on the remote process) to validate this is a self-circular reference
         return $CIRCULAR{$self} if exists $CIRCULAR{$self};
@@ -528,7 +628,7 @@ sub SPLICE {
         if eval {forks::THREADS_NATIVE_EMULATION()};
     my $self = shift;
     my $sub = $self->{'module'}.'::SPLICE';
-    my @result = _command( '_tied',$self->{'ordinal'},$sub,@_ );
+    my @result = map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$sub,@_ );
     wantarray ? @result : $result[0];
 } #SPLICE
 
@@ -543,7 +643,7 @@ sub UNTIE {
 
     my $self = shift;
     return if $self->{'CLONE'} != $CLONE;
-    _command( '_untie',$self->{'ordinal'} );
+    map { ref($_) ? _tied_filter($_) : $_ } _command( '_untie',$self->{'ordinal'} );
 } #UNTIE
 
 #---------------------------------------------------------------------------
@@ -557,7 +657,7 @@ sub DESTROY {   #currently disabled, as DESTROY method is not used by threads
 
 #    my $self = shift;
 #    return if $self->{'CLONE'} != $CLONE;
-#    _command( '_tied',$self->{'ordinal'},$self->{'module'}.'::DESTROY' );
+#    map { ref($_) ? _tied_filter($_) : $_ } _command( '_tied',$self->{'ordinal'},$self->{'module'}.'::DESTROY' );
 } #DESTROY
 
 #---------------------------------------------------------------------------
@@ -1020,6 +1120,20 @@ L<forks/"Native threads 'to-the-letter' emulation mode"> for more information.
 Some caveats that you need to be aware of.
 
 =over 2
+
+=item Storing CODE refs in shared variables
+
+Since forks::shared requires Storable to serialize shared data structures,
+storing CODE refs in shared variables is not enabled by default (primarily
+for security reasons).
+
+If need share CODE refs between threads, the minimum you must do before storing
+CODE refs is:
+
+    $Storable::Deparse = $Storable::Eval = 1;
+
+See L<Storable/"CODE_REFERENCES"> for detailed information, including potential
+security risks and ways to protect yourself against them.
 
 =item test-suite exits in a weird way
 

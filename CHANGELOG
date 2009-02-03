@@ -1,3 +1,42 @@
+0.29	February 2 2009
+	***** Bug fixes *****
+	
+	Shared variables that reference shared variables now consistently report the
+	same thread-local reference memory address.
+	
+	Code refs can now be used as hash keys.
+	
+	Fix spurious warnings regarding mismatched Time::HiRes prototypes.
+	
+	Explicit mg_get in is_shared() to insure tied scalar fetched before ref check.
+	
+	***** Threads API consistency changes *****
+	
+	Can now store CODE refs in shared variables if using Storable >= 2.05.
+	
+	Can now use CODE refs as shared variable keys (stringified values work as
+	expected).
+	
+	Bumped threads::shared $VERSION to 1.27 to match version-supported features
+	and behavior.
+	
+	***** Miscellaneous changes *****
+	
+	Add Makefile build option to upgrade Storable to support using CODE refs in
+	shared variable keys, if Storable < 2.05.
+	
+	Round test suite sleep time check sensitivity to eliminate false positives on
+	some (hardware) platforms.
+	
+	Using more portable prototype definitions with some versions of Test::HiRes.
+	
+	Scalar::Util 1.11 or later now required.
+	
+	Sys::SigAction 0.11 or later now required, as this correctly handles the
+	'safe' sigaction attribute.
+	
+	Fix typo in croak error text in cond_timedwait.
+	
 0.28	December 30 2008
 	***** Bug fixes *****
 	

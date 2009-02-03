@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.28';
+$VERSION = '0.29';
 
 # Allow external modules to defer shared variable init at require
 
@@ -561,9 +561,9 @@ BEGIN {
 
 # Store Time::HiRes sleep function for internal use
 
+    my $proto = prototype 'CORE::sleep';
     my $sleep = *sleep = *sleep = \&Time::HiRes::sleep;
-    *CORE::GLOBAL::sleep = *CORE::GLOBAL::sleep
-        = sub (;@) {
+    my $sub = sub {
 
 # Get requested sleep time
 # Initialize a few variables
@@ -588,11 +588,13 @@ BEGIN {
         }
         return $f; 
     };
+    Scalar::Util::set_prototype(\&{$sub}, $proto);
+    *CORE::GLOBAL::sleep = *CORE::GLOBAL::sleep = $sub;
 
 # Generate same function wrapper for Time::HiRes sleep, usleep, and nanosleep
 
-    *Time::HiRes::sleep = *Time::HiRes::sleep
-        = sub (;@) {
+    $proto = prototype 'Time::HiRes::sleep';
+    $sub = sub {
         my $s = shift;
         my $t = 0;
         my $f = 0;
@@ -606,10 +608,12 @@ BEGIN {
         }
         return $f; 
     };
+    Scalar::Util::set_prototype(\&{$sub}, $proto);
+    *Time::HiRes::sleep = *Time::HiRes::sleep = $sub;
 
+    $proto = prototype 'Time::HiRes::usleep';
     my $usleep = \&Time::HiRes::usleep;
-    *Time::HiRes::usleep = *Time::HiRes::usleep
-        = sub ($) {
+    $sub = sub {
         my $s = shift;
         my $t = 0;
         my $f = 0;
@@ -623,10 +627,12 @@ BEGIN {
         }
         return $f; 
     };
+    Scalar::Util::set_prototype(\&{$sub}, $proto);
+    *Time::HiRes::usleep = *Time::HiRes::usleep = $sub;
 
+    $proto = prototype 'Time::HiRes::nanosleep';
     my $nanosleep = \&Time::HiRes::nanosleep;
-    *Time::HiRes::nanosleep = *Time::HiRes::nanosleep
-        = sub ($) {
+    $sub = sub {
         my $s = shift;
         my $t = 0;
         my $f = 0;
@@ -640,6 +646,8 @@ BEGIN {
         }
         return $f; 
     };
+    Scalar::Util::set_prototype(\&{$sub}, $proto);
+    *Time::HiRes::nanosleep = *Time::HiRes::nanosleep = $sub;
 } #BEGIN
 
 # Satisfy -require-
@@ -1536,6 +1544,11 @@ sub _server {
     my %toread;
     my %read;
     my $curtime;
+    
+# Localize Storable variables to allow CODE refs, if using Storable >= 2.05
+
+    local $Storable::Deparse = 1 if $Storable::VERSION >= 2.05;
+    local $Storable::Eval = 1 if $Storable::VERSION >= 2.05;
 
 # Initialize the number of polls
 # While we're running in the main dispatch loop
@@ -2081,7 +2094,7 @@ sub _init_thread {
 # Reset thread local pid value (so the process doesn't have its parent's pid)
 # Store the return context of this thread
 
-	my $clone_skip = shift;
+    my $clone_skip = shift;
     my $thread_context = shift;
     my $is_detached = shift;
     my $stack_size = shift;
@@ -2605,7 +2618,7 @@ sub _list_tid_pid {
             }
         } else {
             next if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )
-            	or exists( $BLOCKING_JOIN{$tid} );
+                or exists( $BLOCKING_JOIN{$tid} );
         }
         push( @param,$tid,$pid );
     }
@@ -3668,10 +3681,10 @@ sub _run_CLONE {
 #  If we tried to get the code reference before (may be undef if not found)
 #   Use that
 
-	my $clone_skip = shift || {};
+    my $clone_skip = shift || {};
     my %INC_to_parse = (%INC, 'main.pm' => 1);
     while (my $logical = each %INC_to_parse) {
-    	next if exists( $clone_skip->{$logical} ) && $clone_skip->{$logical};
+        next if exists( $clone_skip->{$logical} ) && $clone_skip->{$logical};
         my $code;
         if (exists $CLONE{$logical}) {
             $code = $CLONE{$logical};
@@ -3709,7 +3722,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.28.
+This documentation describes version 0.29.
 
 =head1 SYNOPSIS
 
@@ -3906,8 +3919,9 @@ If you use forks for the first time as "use forks" and other loaded code uses
  if (any)
  IO::Socket (1.18)
  List::MoreUtils (0.15)
- Scalar::Util (1.09)
+ Scalar::Util (1.11)
  Storable (any)
+ Sys::SigAction (0.11)
  Test::More (any)
  Time::HiRes (any)
 
@@ -4074,8 +4088,8 @@ that they were created in:
 
     my $tid = threads->tid if exists $INC{'threads.pm'};
     END {
-	    return if defined($tid) && $tid != threads->tid;
-	    # standard end block code goes here
+        return if defined($tid) && $tid != threads->tid;
+        # standard end block code goes here
     }
     
 This code is completely compatible with native ithreads.  Note that this
