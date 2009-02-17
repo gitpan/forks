@@ -533,20 +533,22 @@ $thread3->detach;
 
 #== thread stack size ==============================================
 cmp_ok( threads->get_stack_size(), '==', 0, "Check for default thread stack size" );
-SKIP: {
-    skip 'Not implemented (yet)', 5;
+{
     threads->set_stack_size( 64*4096 );
     cmp_ok( threads->get_stack_size(), '>', 0, "Check for custom thread stack size" );
-    $thread1 = threads->new( sub { 1 })->join();
+    $thread1 = threads->new( sub { 1 });
     cmp_ok( $thread1->get_stack_size(), '>', 0, "Check for custom thread stack size" );
+    $thread1->join();
 
     threads->set_stack_size( 0 );
     cmp_ok( threads->get_stack_size(), '==', 0, "Check for default thread stack size" );
-    $thread1 = threads->new({ 'stack_size' => 4096*64 }, sub { 1 })->join();
+    $thread1 = threads->new({ 'stack' => 4096*64 }, sub { 1 });
     cmp_ok( $thread1->get_stack_size(), '>', 0, "Check for custom thread stack size" );
 
-    $thread2 = $thread1->create( sub { 1 } )->join();
-    cmp_ok( $thread1->get_stack_size(), '>', 0, "Check for custom thread stack size" );
+    $thread2 = $thread1->create( sub { 1 } );
+    cmp_ok( $thread2->get_stack_size(), '==', 0, "Check for default stack size" );
+    $thread1->join();
+    $thread2->join();
 }
 
 #== thread context =================================================

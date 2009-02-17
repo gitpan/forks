@@ -1,3 +1,20 @@
+0.30	February 16 2009
+	***** Bug fixes *****
+	
+	Don't overload/define Time::HiRes usleep or nanosleep unless they are supported
+	on target platform.
+	
+	Check for "Invalid value for shared scalar" errors when storing values in
+	shared scalars.
+	
+	Shared scalar values containing user tied objects will no longer be treated as
+	threads::shared objects when checking for circular references.
+	
+	***** Miscellaneous changes *****
+	
+	Overloaded sleep total sleep time is more accurate if interrupted by child
+	thread shutdown (CHLD) signals.
+	
 0.29	February 2 2009
 	***** Bug fixes *****
 	

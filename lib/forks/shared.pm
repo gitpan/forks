@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.29';
+$VERSION = '0.30';
 
 use Config ();
 
@@ -360,10 +360,10 @@ $make_shared = sub {
 # Increment the current clone value (mark this as a cloned version)
 
 sub CLONE {
-	%CIRCULAR = ();
-	%CIRCULAR_REVERSE = ();
-	%SHARED_CACHE = ();
-	$CLONE++;
+    %CIRCULAR = ();
+    %CIRCULAR_REVERSE = ();
+    %SHARED_CACHE = ();
+    $CLONE++;
 } #CLONE
 
 #---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ sub _tied_filter {
     return $it unless $ref;
 
 # Obtain the object
-#  Return immediately if isn't a threads::shared object (i.e. circular REF)
+# Return immediately if isn't a threads::shared object (i.e. circular REF)
 
     my $object;
     if ($ref eq 'SCALAR') {
@@ -429,8 +429,9 @@ sub _tied_filter {
     } elsif ($ref eq 'GLOB') {
         $object = tied *{$it};
     } else {
-    	return $it;
+        return $it;
     }
+    return $it unless UNIVERSAL::isa($object, 'threads::shared');
 
 #  Get the ordinal
 #  If we already have a cached copy of this object
@@ -441,15 +442,15 @@ sub _tied_filter {
 #   Cache this value
 # Return the (tied) value
 
-	my $ordinal = $object->{'ordinal'};
-	if (exists $SHARED_CACHE{$ordinal}) {
-		my $class = blessed($it);
-		CORE::bless($SHARED_CACHE{$ordinal}, $class) if $class;
-		$it = $SHARED_CACHE{$ordinal};
-	} else {
-		$SHARED_CACHE{$ordinal} = $it;
-	}
-	return $it;
+    my $ordinal = $object->{'ordinal'};
+    if (exists $SHARED_CACHE{$ordinal}) {
+        my $class = blessed($it);
+        CORE::bless($SHARED_CACHE{$ordinal}, $class) if $class;
+        $it = $SHARED_CACHE{$ordinal};
+    } else {
+        $SHARED_CACHE{$ordinal} = $it;
+    }
+    return $it;
 }
 
 # Define generic perltie proxy methods for most scalar, array, hash, and handle events
@@ -545,19 +546,22 @@ sub STORE {
 
     my $self = shift;
     my $sub = $self->{'module'}.'::STORE';
-    if (my $ref = reftype($_[1])) {
+    my $val = $_[$self->{'type'} eq 'scalar' ? 0 : 1];
+    if (my $ref = reftype($val)) {
         my $object;
         if ($ref eq 'SCALAR') {
-            $object = tied ${$_[1]};
+            $object = tied ${$val};
         } elsif ($ref eq 'ARRAY') {
-            $object = tied @{$_[1]};
+            $object = tied @{$val};
         } elsif ($ref eq 'HASH') {
-            $object = tied %{$_[1]};
+            $object = tied %{$val};
         } elsif ($ref eq 'GLOB') {
-            $object = tied *{$_[1]};
+            $object = tied *{$val};
+        } elsif ($ref eq 'REF') {
+            $object = $val;
         }
         Carp::croak "Invalid value for shared scalar"
-            unless defined $object && $object->isa('threads::shared');
+            unless defined $object && (ref($object) eq 'REF' || $object->isa('threads::shared'));
     }
 
 # If we're a hash and the key is a code reference
@@ -796,7 +800,12 @@ sub __id {
     } else {
         return undef;
     }
-} #_id
+} #__id
+
+#---------------------------------------------------------------------------
+#  IN: 1 reference to variable
+
+sub _refcnt {} #_refcnt
 
 #---------------------------------------------------------------------------
 #  IN: 1..N ordinal numbers of variables to unlock
@@ -1157,7 +1166,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2008 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2009 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

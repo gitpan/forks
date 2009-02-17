@@ -91,10 +91,6 @@ forks 0.25, so may be resolved.
 
 ***** Miscellaneous Items *****
 
-sleep() can sleep too long if woken by many forks-related signals (mainly CHLD).
-Would be more precise if sleep time could be tracked as floating point rather
-than integer, like hi-res versions of the function.
-
 Consider checking _check_pl_signal_unsafe_flag for any thread signaling behavior,
 and warn user about (or prevent from using) signals (i.e. deadlock detect, $t->kill).
 

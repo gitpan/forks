@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.29';
+$VERSION = '0.30';
 
 # Allow external modules to defer shared variable init at require
 
@@ -583,15 +583,16 @@ BEGIN {
         while ($s - $t > 0) {
             $s -= $t;
             $IFNDEF_REAPER_CALLED = 0;
-            $f += $t = CORE::sleep $s;
+            $f += $t = $sleep->($s);
             last unless $IFNDEF_REAPER_CALLED;
         }
-        return $f; 
+        return sprintf("%.0f", $f); 
     };
     Scalar::Util::set_prototype(\&{$sub}, $proto);
     *CORE::GLOBAL::sleep = *CORE::GLOBAL::sleep = $sub;
 
-# Generate same function wrapper for Time::HiRes sleep, usleep, and nanosleep
+# Generate same function wrapper for Time::HiRes sleep, usleep, and nanosleep.
+# For usleep and nanosleep, only overload if they are defined.
 
     $proto = prototype 'Time::HiRes::sleep';
     $sub = sub {
@@ -611,43 +612,47 @@ BEGIN {
     Scalar::Util::set_prototype(\&{$sub}, $proto);
     *Time::HiRes::sleep = *Time::HiRes::sleep = $sub;
 
-    $proto = prototype 'Time::HiRes::usleep';
-    my $usleep = \&Time::HiRes::usleep;
-    $sub = sub {
-        my $s = shift;
-        my $t = 0;
-        my $f = 0;
-        my $sig;
-        local $IFNDEF_REAPER_CALLED;
-        while ($s - $t > 0) {
-            $s -= $t;
-            $IFNDEF_REAPER_CALLED = 0;
-            $f += $t = $usleep->($s);
-            last unless $IFNDEF_REAPER_CALLED;
-        }
-        return $f; 
-    };
-    Scalar::Util::set_prototype(\&{$sub}, $proto);
-    *Time::HiRes::usleep = *Time::HiRes::usleep = $sub;
+    if (&Time::HiRes::d_usleep) {
+        $proto = prototype 'Time::HiRes::usleep';
+        my $usleep = \&Time::HiRes::usleep;
+        $sub = sub {
+            my $s = shift;
+            my $t = 0;
+            my $f = 0;
+            my $sig;
+            local $IFNDEF_REAPER_CALLED;
+            while ($s - $t > 0) {
+                $s -= $t;
+                $IFNDEF_REAPER_CALLED = 0;
+                $f += $t = $usleep->($s);
+                last unless $IFNDEF_REAPER_CALLED;
+            }
+            return $f; 
+        };
+        Scalar::Util::set_prototype(\&{$sub}, $proto);
+        *Time::HiRes::usleep = *Time::HiRes::usleep = $sub;
+    }
 
-    $proto = prototype 'Time::HiRes::nanosleep';
-    my $nanosleep = \&Time::HiRes::nanosleep;
-    $sub = sub {
-        my $s = shift;
-        my $t = 0;
-        my $f = 0;
-        my $sig;
-        local $IFNDEF_REAPER_CALLED;
-        while ($s - $t > 0) {
-            $s -= $t;
-            $IFNDEF_REAPER_CALLED = 0;
-            $f += $t = $nanosleep->($s);
-            last unless $IFNDEF_REAPER_CALLED;
-        }
-        return $f; 
-    };
-    Scalar::Util::set_prototype(\&{$sub}, $proto);
-    *Time::HiRes::nanosleep = *Time::HiRes::nanosleep = $sub;
+    if (&Time::HiRes::d_nanosleep) {
+        $proto = prototype 'Time::HiRes::nanosleep';
+        my $nanosleep = \&Time::HiRes::nanosleep;
+        $sub = sub {
+            my $s = shift;
+            my $t = 0;
+            my $f = 0;
+            my $sig;
+            local $IFNDEF_REAPER_CALLED;
+            while ($s - $t > 0) {
+                $s -= $t;
+                $IFNDEF_REAPER_CALLED = 0;
+                $f += $t = $nanosleep->($s);
+                last unless $IFNDEF_REAPER_CALLED;
+            }
+            return $f; 
+        };
+        Scalar::Util::set_prototype(\&{$sub}, $proto);
+        *Time::HiRes::nanosleep = *Time::HiRes::nanosleep = $sub;
+    }
 } #BEGIN
 
 # Satisfy -require-
@@ -3722,7 +3727,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.29.
+This documentation describes version 0.30.
 
 =head1 SYNOPSIS
 
@@ -4249,7 +4254,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2008 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2009 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

@@ -14,42 +14,42 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 d5ad35ce1e17d65b2c4a91b77cc78eeb70c5919b CHANGELOG
+SHA1 1986f939536e20f53051d5c5e5bdaf9024e381c1 CHANGELOG
 SHA1 455b7ebe2265a00e97f133c8cd7ebf56148a573d CREDITS
 SHA1 39698ae217c33cc989d0a1c32ef0adb147bc2dd7 MANIFEST
 SHA1 0a40de91b5f4169eef3ff3ef456a40b79d056e78 MANIFEST.skip
-SHA1 acfa02ecfd88c2527eea9b391d6125eea61bb356 META.yml
+SHA1 ba4020a229ec0d467dbd7b54a128e2f35f4f9332 META.yml
 SHA1 5bce1b4e0daf722ddeb831f80fec65ad41744aa1 Makefile.PL
-SHA1 8233abff1296faed2ab448145d313c3f9571fd99 README
-SHA1 28372f91a3aba521d78594d1fecb2f9a5b1184aa TODO
+SHA1 443bf24be6d1a041bc9c60ff12317f65d8c18ef7 README
+SHA1 7ece9940a98b966f12c8930024815fff293364e1 TODO
 SHA1 b8554457d862188bf4bce3639881d99617bc4529 VERSION
 SHA1 8b16e73ade400e5915771b8548b5a0649911f840 forks.xs
-SHA1 8e0fb5f8dfd61a6f5ee6cd3647b2787cd3dc8892 lib/forks.pm
-SHA1 2bf12c6333cc976cf6249718d3cd2989ee6ce194 lib/forks/shared.pm
-SHA1 0c922140d8c5aa6ee7494f346fcf5f4fd31820bb lib/forks/shared/attributes.pm
-SHA1 0abad40e1c6fa38163f8abbf0cdc51870f24b3eb lib/forks/shared/global_filter.pm
-SHA1 efb1d374de2acc4aa098ce79a1ed8f2204760b86 lib/forks/signals.pm
-SHA1 1f23abed6263fb48f06ae4bc40d2eb81be5f31f8 lib/threads/shared/array.pm
-SHA1 294f640a88002147f0515ab815d6711d03a65745 lib/threads/shared/handle.pm
-SHA1 0d36f39579263c42e3144914016832f17dd4642e lib/threads/shared/hash.pm
-SHA1 ffb7bfadeb908ce095fd7547bc87cb5630965cea lib/threads/shared/scalar.pm
+SHA1 0df068122f4bac9b1062a8eeaf39053dd4b7c7b1 lib/forks.pm
+SHA1 85f5fd1b488b2c6ed314ed8940172f62c6ac5fd6 lib/forks/shared.pm
+SHA1 ab4b5f6d63c02828e0dec2193a70fe0a1e81bd48 lib/forks/shared/attributes.pm
+SHA1 9068e217c50d505285622eb2727e94dd92ac94fd lib/forks/shared/global_filter.pm
+SHA1 0ba67bd6674097deec8d239e363dfb0f23666c2d lib/forks/signals.pm
+SHA1 28149b490859601760ea45fd341d0f287dec7d9a lib/threads/shared/array.pm
+SHA1 6d2cf0bde23851e184922893531abd6aa1b5add6 lib/threads/shared/handle.pm
+SHA1 71cb019235efa5744936bd7ffbc99f85fdf0c2c8 lib/threads/shared/hash.pm
+SHA1 1e256aa82c1b3676be438d3bb1bd8eae979a2543 lib/threads/shared/scalar.pm
 SHA1 f69eeb8e326e003853e4ccec4960884a8b7e56dd ppport.h
 SHA1 e0b161c71a2dba88fa7827c54ab597bf29ba2cdb t/forks00-sigtrap.t
-SHA1 3416fd23b933fa5ea16bc04f1d76b38206e3acb9 t/forks01.t
+SHA1 ee99daa214de31482de760ff70419a6ed0590e24 t/forks01.t
 SHA1 dc739710ac9c97c36f8e2cb77ae5af4aee2e8447 t/forks02.t
 SHA1 0f74478dda08dbd57a29bb46ef5a95cdf6d864eb t/forks03.t
 SHA1 2863b14f575b3415ac7b415ad77a8a7ed5cb9143 t/forks04.t
 SHA1 6a169e8599e1d75b5f7ad1ac8209f9eae46b258b t/forks05.t
 SHA1 50af07b5275498fd708b4fb2d0de5e28062b33fd t/forks06.t
 SHA1 f8dd4f7c16f7ce96cde23f1953737468fa6bad7f t/forks07.t
-SHA1 3f9ea719406830705a137f5ba37eec45f31a0b81 t/forks08.t
+SHA1 8123b2da0db17630c77bdffac33eb53dc28a8bf2 t/forks08.t
 SHA1 686e3f8214ba69d3960218aa6eb2a49b5c0a2270 t/forks09.t
 SHA1 d45ee162070db10b691958fa140d8fc297bd3d90 t/forks20.t
 SHA1 fc5734f9c393dcc9f12c87df4bf9362e88a800ad t/forks99.t
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.8 (Darwin)
 
-iEYEARECAAYFAkmH5AsACgkQQwn7DcpJEO59ogCgsuMiyj/sXjP4Rxz5cErgtbDV
-6TMAnRJnU6IsSbk7dQgbcrkt8CYb7yOQ
-=hQEB
+iEYEARECAAYFAkmacPsACgkQQwn7DcpJEO59tQCfa5Hr7UMjRR7QpktcH6HykKAk
+F64AoNcmQXAiF1uga7iDU6ItKudMCTUd
+=EXKk
 -----END PGP SIGNATURE-----
