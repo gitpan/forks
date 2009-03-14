@@ -546,7 +546,7 @@ cmp_ok( threads->get_stack_size(), '==', 0, "Check for default thread stack size
     cmp_ok( $thread1->get_stack_size(), '>', 0, "Check for custom thread stack size" );
 
     $thread2 = $thread1->create( sub { 1 } );
-    cmp_ok( $thread2->get_stack_size(), '==', 0, "Check for default stack size" );
+    cmp_ok( $thread2->get_stack_size(), '==', 4096*64, "Check for default stack size" );
     $thread1->join();
     $thread2->join();
 }

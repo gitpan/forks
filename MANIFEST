@@ -27,6 +27,7 @@ t/forks06.t
 t/forks07.t
 t/forks08.t
 t/forks09.t
+t/forks10.t
 t/forks20.t
 t/forks99.t
 TODO

@@ -3,7 +3,7 @@ package threads::shared::array;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.30';
+$VERSION = '0.31';
 use strict;
 use Scalar::Util;
 

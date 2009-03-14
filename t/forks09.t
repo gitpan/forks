@@ -100,10 +100,10 @@ use warnings;
         $foo = shared_clone($x);
     })->join();
 
-	#TODO: fix to re-load shared REFs before comparison; to be addressed in later release
-	is_shared($$foo);
-	is_shared($$$$$foo);
-	
+    #TODO: fix to re-load shared REFs before comparison; to be addressed in later release
+    is_shared($$foo);
+    is_shared($$$$$foo);
+    
     ok(is_shared($$foo) == is_shared($$$$$foo),
                     'Cloned circular refs from thread');
 }

@@ -84,8 +84,8 @@ $exit_val = system($cmd2) >> 8;
 cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
 SKIP: { #TODO perl 5.6 compatibility, unclear why exit() is not handled (possibly a signal issue)
     skip 'Case not  supported in perl 5.6 (yet)', 1;
-	$exit_val = system($cmd3) >> 8;
-	cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
+    $exit_val = system($cmd3) >> 8;
+    cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');
 }
 $exit_val = system($cmd4) >> 8;
 cmp_ok($exit_val, '==', $desired_exit_val, 'Check that perl exit value is correct with forks');

@@ -10,12 +10,19 @@ Make thread objects shared in nature, such that their properties may be read
 across all threads.  Will make _handle more reliable, and allow for thread
 state params to be persisted.
 
-Consider support for CLONE_SKIP.  Or maybe just add support for a PRECLONE class
-method, which will be called in parent context.
-(http://perldoc.perl.org/perlmod.html#Making-your-module-threadsafe-threadsafe-thread-safe-module%2c-threadsafe-module%2c-thread-safe-CLONE-CLONE_SKIP-thread-threads-ithread)
-
 Add a method to give the user run-time privilege control over Unix socket 
 file descriptors (for additional security control).
+
+Possibly implement TTY wrapper control for Perl debugger, such that user has simpler
+API functions to call to bind a thread to a TTY.  Idea is to integrate debugger
+TTY control functionality as thread create arguments, to allow for unique tty
+subroutines to be defined per thread, or unique TTY values to be "bound" to specific
+threads.
+
+Consider interfacing with graphical Perl debugger intefaces, to simplify
+multi-threaded debugging; managing multiple TTYs, although supported in different
+terminals (1 per thread), can be conceptually difficult.  Considering interface
+to Devel::PDB.  Open to suggestions, comments, patches.
 
 
 ***** Issues to Address *****
@@ -23,9 +30,6 @@ file descriptors (for additional security control).
 Need to load internally cached, shared REF values from server, not from first use
 to insure that values are correctly loaded, to insure they correctly evaluate when
 used in is_shared(). (TODO temp patch seen in t/forks09.t)
-
-CLONE_SKIP needs to be aware of packages that aren't in %INC.  Same goes for CLONE.
-(Maybe use http://search.cpan.org/~gslondon/Symbol-Table-1.01/Table.pm#Hash_Keys)
 
 Circular references and ref(), Scalar::Util::reftype(), attribute::reftype() don't
 work well with perltie shared variables.  Likely a limitation of how we're using
@@ -43,14 +47,15 @@ for some modules.
 
 Environment variables should be shared among all threads (ithreads behavior).
 
-Current working directory should be shared among all threads (ithreads behavior).
+Current working directory should be shared among all threads (ithreads behavior).  Note
+that this may be considered bug in current ithreads implementation.
 
 Memory is currently not reclaimed for shared variables that are no longer
-referenced by any thread.  Possible solution: implement PL_destroyhook
-
+referenced by any thread.  Possible solutions: implement PL_destroyhook; or use
+STORE for threads::shared objects, and DESTROY for threads, to track shared var _refcnt.
 DESTROY will be called on shared objects in an exiting thread, even if still
-referenced in other threads.  Possible solution: implement PL_destroyhook and
-globally track shared variable refcount.
+referenced in other threads.  If can track global _refcnt, could determine refcnt
+state from server and destroy only when 0.
 
 Determine if it is possible to recover all memory from detached threads.  Joined
 threads reclaim all shared memory (very stable memory usage); detached threads

@@ -1,3 +1,40 @@
+0.31	March 14 2009
+	***** Threads API consistency changes *****
+	
+	Module CLONE and CLONE_SKIP functions now are passed package name as first argument.
+
+	When CLONE_SKIP true in package, all objects in child threads are now cleared.  This
+	occurs after fork (unavoidable affect of system fork COW), which hopefully should
+	be portable with all non-perl modules.  Note that arrays and hashes will be emptied,
+	but not converted to undef scalar ref; this differs from ithreads (where all become
+	undef scalar ref).  Patches are welcome.
+	
+	Bumped threads $VERSION to 1.72, threads::shared $VERSION to 1.28 to match
+	version-supported features and behavior.
+	
+	***** Bug fixes *****
+	
+	Improve package detection for CLONE and CLONE_SKIP; now identifies all packages in
+	symbol table, not just packages identified by %INC.  This allows for support of
+	multiple modules in a file/module that may have CLONE or CLONE_SKIP functions.
+	
+	Improved Time::HiRes::nanosleep support detection.
+	
+	Corrected possible race condition with $thr->get_stack_size().  Documented
+	expected behavior.
+	
+	***** Miscellaneous changes *****
+	
+	Added preliminary Perl debugger support.  Defaults to tying TTY only to main thread,
+	unless breakpoints exist in user code.
+	
+	Add some time tolerance in forks08.t, to accomodate for busy systems or slow signal
+	handling.
+	
+	New CPAN module requirements: Devel::Symdump and Acme::Damn.
+	
+	Updated to ppport.h 3.16.
+
 0.30	February 16 2009
 	***** Bug fixes *****
 	
@@ -12,8 +49,8 @@
 	
 	***** Miscellaneous changes *****
 	
-	Overloaded sleep total sleep time is more accurate if interrupted by child
-	thread shutdown (CHLD) signals.
+	Overloaded sleep total sleep time is more accurate in cases where it might be
+	interrupted by child thread shutdown (CHLD) signals.
 	
 0.29	February 2 2009
 	***** Bug fixes *****
@@ -40,7 +77,7 @@
 	***** Miscellaneous changes *****
 	
 	Add Makefile build option to upgrade Storable to support using CODE refs in
-	shared variable keys, if Storable < 2.05.
+	shared variable keys, if using Storable 2.05 or later.
 	
 	Round test suite sleep time check sensitivity to eliminate false positives on
 	some (hardware) platforms.

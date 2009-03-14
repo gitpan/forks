@@ -1,6 +1,6 @@
 package
     forks::signals; #hide from PAUSE
-$VERSION = '0.30';
+$VERSION = '0.31';
 
 use strict;
 use warnings;

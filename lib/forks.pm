@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.30';
+$VERSION = '0.31';
 
 # Allow external modules to defer shared variable init at require
 
@@ -15,7 +15,7 @@ package
 # Be strict from now on
 
 BEGIN {
-    $VERSION = '1.71';
+    $VERSION = '1.72';
     $threads        = $threads        = 1; # twice to avoid warnings
     $forks::threads = $forks::threads = 1; # twice to avoid warnings
     $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
@@ -46,13 +46,15 @@ use warnings::register;
 use Carp ();
 
 #---------------------------------------------------------------------------
-# Set when to execute end block
+# Set when to execute check and end blocks
 
 BEGIN {
     if ($^C) {
         eval "CHECK { _CHECK() }";
+    } elsif (defined &DB::DB) {
+        # TODO: no end block for now, as debugger halts on it (ignoring $DB::inhibit_exit)
     } else {
-        $] < 5.008 ? eval "END { eval{_END()} }" : eval "END { _END() }";
+        $] < 5.008 ? eval "END { eval{ _END() } }" : eval "END { _END() }";
     }
 } #BEGIN
 
@@ -83,9 +85,12 @@ BEGIN {
 
 # Import additional scalar methods for refs and objects
 # Load library to set temp dir for forks data
+# Load library that to support unblessing objects
 
 use Scalar::Util qw(reftype blessed refaddr);
 use File::Spec;
+use Devel::Symdump;
+use Acme::Damn ();
 
 # Set constant for IPC temp dir
 # Set constant for IPC temp thread signal notifications
@@ -276,8 +281,9 @@ my $SHUTDOWN = 0;
 # Initialize the "thread local" thread id
 # Initialize the pid of the thread
 # Return context of thread (possible values are same as those of CORE::wantarray)
-# Initialize hash (key: module) with code references of CLONE subroutines
-# Initialize hash (key: module) with code references of CLONE_SKIP subroutines
+# Initialize hash (key: package) with code references of CLONE subroutines
+# Initialize hash (key: package) with code references of CLONE_SKIP subroutines
+# Initialize hash (key: package) with object references for CLONE_SKIP-enabled classes
 
 my $RUNNING = 1;
 my $EXIT_VALUE;
@@ -303,7 +309,8 @@ my $TID;
 my $PID;
 my $THREAD_CONTEXT;
 my %CLONE;
-my %CLONE_SKIP;
+our %CLONE_SKIP;
+our %CLONE_SKIP_REF;
 
 # Initialize the next thread ID to be issued
 # Initialize hash (key: tid) with the thread id to client object translation
@@ -612,7 +619,8 @@ BEGIN {
     Scalar::Util::set_prototype(\&{$sub}, $proto);
     *Time::HiRes::sleep = *Time::HiRes::sleep = $sub;
 
-    if (&Time::HiRes::d_usleep) {
+    if (&Time::HiRes::d_usleep
+        && defined(my $t = eval { Time::HiRes::nanosleep(0) }) && !$@) {
         $proto = prototype 'Time::HiRes::usleep';
         my $usleep = \&Time::HiRes::usleep;
         $sub = sub {
@@ -633,7 +641,8 @@ BEGIN {
         *Time::HiRes::usleep = *Time::HiRes::usleep = $sub;
     }
 
-    if (&Time::HiRes::d_nanosleep) {
+    if (&Time::HiRes::d_nanosleep
+        && defined(my $t = eval { Time::HiRes::nanosleep(0) }) && !$@) {
         $proto = prototype 'Time::HiRes::nanosleep';
         my $nanosleep = \&Time::HiRes::nanosleep;
         $sub = sub {
@@ -654,10 +663,6 @@ BEGIN {
         *Time::HiRes::nanosleep = *Time::HiRes::nanosleep = $sub;
     }
 } #BEGIN
-
-# Satisfy -require-
-
-1;
 
 #---------------------------------------------------------------------------
 
@@ -1348,6 +1353,7 @@ sub _init_server {
 # If is parent
 #  Configure signal handlers
 #  Configure child signal handler
+# Prevent server taking over TTY on exit when in debugger
 # Start handling requests as the server
 
     delete( @SIG{keys %SIG} );
@@ -1356,6 +1362,8 @@ sub _init_server {
             qw(normal-signals USR1 USR2 die error-signals));
         $SIG{CHLD} = \&REAPER_SHARED_DAEMON;
     }
+
+    $DB::inhibit_exit = 0;
     &_server;
 } #_init_server
 
@@ -1422,9 +1430,11 @@ sub _end_server_post_shutdown {}
 
 #---------------------------------------------------------------------------
 
+my $END_CALLED;
 sub _END {
 
 # Revert to default CHLD handler to insure portable, reliable shutdown
+# Prevent ths subroutine from ever being called twice
 # Localize $! and $? to prevent accidental override during shutdown
 # If this process is the shared server
 #  Calculate and report stats on running and/or unjoined threads (excluding main thread)
@@ -1445,6 +1455,8 @@ sub _END {
 
     $forks::signals::sig->{CHLD} = 'DEFAULT';
     LOCALEXITBLOCK: {
+        last if $END_CALLED;
+        $END_CALLED = 1;
         local $!; local $?;
         if (!exists( $ISATHREAD{$$} ) && defined($SHARED) && $$ == $SHARED) {
             my $running_and_unjoined = 0;
@@ -1510,7 +1522,7 @@ sub _END {
             }
         }
     }
-    $? = $EXIT_VALUE if defined $EXIT_VALUE;
+    $? = $EXIT_VALUE if defined $EXIT_VALUE && !$END_CALLED;
 } #_END
 
 #---------------------------------------------------------------------------
@@ -1817,11 +1829,11 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
             delete( $TID2CLIENT{$tid} );
             delete( $CLIENT2TID{$client} );
             delete( $PID2TID{$pid} ) if defined $pid;
-            delete( $TID2STACKSIZE{$tid} );
-            delete( $TID2PID{$tid} )
-               if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
-            delete( $TID2CONTEXT{$tid} )
-               if $DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} );
+            if ($DETACHED =~ m/\b$tid\b/ or !exists( $NOTJOINED{$tid} )) {
+                delete( $TID2PID{$tid} );
+                delete( $TID2STACKSIZE{$tid} );
+                delete( $TID2CONTEXT{$tid} );
+            }
         }
     }
 
@@ -2125,6 +2137,7 @@ sub _init_thread {
 # Die now if it is the wrong type of message
 # Set the tid
 # Set the pid
+# Disable debug on process exit if this isn't main thread
 # Send the command to register the pid (unless starting detached or is main thread)
 # Execute all of the CLONE subroutines if not in the base thread
 
@@ -2132,6 +2145,7 @@ sub _init_thread {
     _croak( "Received '$param[0]' unexpectedly" ) if $param[0] ne '_set_tid';
     $TID = $param[1];
     $PID = $$;
+    $DB::inhibit_exit = 0 if $TID;
     _send( $QUERY,'_register_pid',$TID,$$,($is_detached || !$TID ? undef : getppid()),$thread_context,$is_detached,$stack_size );
     _run_CLONE($clone_skip) if $TID;
     
@@ -2764,6 +2778,7 @@ sub _detach {
             delete( $RESULT{$tid} );
         }
         delete( $TID2CONTEXT{$tid} );
+        delete( $TID2STACKSIZE{$tid} );
     }
     $WRITE{$client} = _pack_response( [$can_detach, $errtxt] );
 } #_detach
@@ -2859,7 +2874,7 @@ sub _get_set_stack_size {
 # Return old stack size
 
     my ($client,$tid,$size) = @_;
-    my $old = defined $tid ? $TID2STACKSIZE{$tid} : $ITHREADS_STACK_SIZE;
+    my $old = defined $tid && exists $TID2STACKSIZE{$tid} ? $TID2STACKSIZE{$tid} : $ITHREADS_STACK_SIZE;
     $ITHREADS_STACK_SIZE = $size if defined $size && $size =~ m/^\d+$/o;
     $WRITE{$client} = _pack_response( [$old] );
 } #_get_set_stack_size
@@ -3577,6 +3592,7 @@ sub _isjoined {
 # Forget about listing in ->list if this thread was shutdown already
 # Mark that thread as joined
 # Delete thread context information
+# Delete thread stack size information
 
     $WRITE{$client} = _pack_response( [1, @_] );
 #warn "case 7: tid $tid had this to say (".scalar(@_)."): ".CORE::join(',', @_);    #TODO: for debugging only
@@ -3585,6 +3601,7 @@ sub _isjoined {
     delete( $TID2PID{$tid} ) unless exists( $TID2CLIENT{$tid} );
     delete( $NOTJOINED{$tid} );
     delete( $TID2CONTEXT{$tid} );
+    delete( $TID2STACKSIZE{$tid} );
 } #_isjoined
 
 #---------------------------------------------------------------------------
@@ -3637,86 +3654,89 @@ sub _client2tidpid {
 sub _run_CLONE_SKIP {
 
 # Prepare hash for results
-# For every module loaded
+# For every package loaded (including main::)
 #  Initialize code reference
 #  If we tried to get the code reference before (may be undef if not found)
 #   Use that
 
     my %result;
-    my %INC_to_parse = (%INC, 'main.pm' => 1);
-    while (my $logical = each %INC_to_parse) {
+    $result{pkg} = ['main',
+        grep { $_ !~ /^CORE::|::SUPER$/o } Devel::Symdump->rnew->packages];
+    foreach my $package (@{$result{pkg}}) {
         my $code;
-        if (exists $CLONE_SKIP{$logical}) {
-            $code = $CLONE_SKIP{$logical};
+        if (exists $CLONE_SKIP{$package}) {
+            $code = $CLONE_SKIP{$package};
 
 #  Else
-#   Make copy of logical name
-#   If it looks like a true module
-#    Make sure directories are properly represented in the name
-#    Attempt to obtain the code reference, don't care if failed
-#   Else
-#    Make sure we don't try this again
+#   Attempt to obtain the code reference, don't care if failed
 #  Execute the CLONE_SKIP subroutine if found, and save result
 # Return results
 
         } else {
-            my $module = $logical;
-            if ($module =~ s#\.pm$##) {
-                $module =~ s#/#::#g;
-                $code = $CLONE_SKIP{$logical} = eval { $module->can( 'CLONE_SKIP' ) };
-            } else {
-                $CLONE_SKIP{$logical} = undef;
-            }
+            $code = $CLONE_SKIP{$package} = eval { $package->can( 'CLONE_SKIP' ) };
         }
-        $result{$logical} = &{$code} if $code;
+        $result{skip}{$package} = $code->($package) if $code;
     }
     
     return \%result;
-} #_run_CLONE
+} #_run_CLONE_SKIP
 
 #---------------------------------------------------------------------------
 
 sub _run_CLONE {
 
 # Load results of _run_CLONE_SKIP
-# Load hash of %INC modules returned by _run_CLONE_SKIP
-# For every module loaded
-#  Skip this module if CLONE_SKIP returned a true value
+# For every package loaded (including main::)
 #  Initialize code reference
+#  If this package CLONE_SKIP returned a true value
+#   Find all blessed objects from this class
+#    First, "damn" object to unbless and prevent DESTROY
+#    Now replace value with an undef SCALAR ref, or undef the existing datastructure
+#   Remove package from tracked entities
+#   Immediately check next package (skip clone)
 #  If we tried to get the code reference before (may be undef if not found)
 #   Use that
 
-    my $clone_skip = shift || {};
-    my %INC_to_parse = (%INC, 'main.pm' => 1);
-    while (my $logical = each %INC_to_parse) {
-        next if exists( $clone_skip->{$logical} ) && $clone_skip->{$logical};
+    my $clone = shift || { skip => undef, pkg => ['main',
+        grep { $_ !~ /^CORE::|::SUPER$/o } Devel::Symdump->rnew->packages]};
+    CLONE_LOOP: foreach my $package (@{$clone->{pkg}}) {
         my $code;
-        if (exists $CLONE{$logical}) {
-            $code = $CLONE{$logical};
+        if (exists( $clone->{skip}{$package} ) && $clone->{skip}{$package}) {
+            $CLONE_SKIP_REF{$package} = {} unless $CLONE_SKIP_REF{$package};
+            while (my ($addr, $ref) = each %{$CLONE_SKIP_REF{$package}}) {
+                my $class = blessed(${$ref});
+                if ($class && $class eq $package) {
+                    Acme::Damn::damn(${$ref});
+                    if (reftype( ${$CLONE_SKIP_REF{$package}{$addr}} ) eq 'HASH') {
+                        undef %{${$CLONE_SKIP_REF{$package}{$addr}}};
+                    } elsif (reftype( ${$CLONE_SKIP_REF{$package}{$addr}} ) eq 'ARRAY') {
+                        undef @{${$CLONE_SKIP_REF{$package}{$addr}}};
+                    } else {
+                        undef ${${$CLONE_SKIP_REF{$package}{$addr}}};
+                    }
+                }
+            }
+            delete $CLONE_SKIP_REF{$package};
+            next CLONE_LOOP;
+        } elsif (exists $CLONE{$package}) {
+            $code = $CLONE{$package};
 
 #  Else
-#   Make copy of logical name
-#   If it looks like a true module
-#    Make sure directories are properly represented in the name
-#    Attempt to obtain the code reference, don't care if failed
-#   Else
-#    Make sure we don't try this again
+#   Attempt to obtain the code reference, don't care if failed
 #  Execute the CLONE subroutine if found
 
         } else {
-            my $module = $logical;
-            if ($module =~ s#\.pm$##) {
-                $module =~ s#/#::#g;
-                $code = $CLONE{$logical} = eval { $module->can( 'CLONE' ) };
-            } else {
-                $CLONE{$logical} = undef;
-            }
+            $code = $CLONE{$package} = eval { $package->can( 'CLONE' ) };
         }
-        &{$code} if $code;
+        $code->($package) if $code;
     }
 } #_run_CLONE
 
 #---------------------------------------------------------------------------
+
+# Satisfy -require-
+
+1;
 
 __END__
 =pod
@@ -3727,7 +3747,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.30.
+This documentation describes version 0.31.
 
 =head1 SYNOPSIS
 
@@ -3787,7 +3807,7 @@ This documentation describes version 0.30.
   # Use forks as a drop-in replacement for an ithreads application
   perl -Mforks -Mforks::shared threadapplication
   
-See L<threads/"SYNOPSYS"> for more examples.
+See L<threads/"SYNOPSIS"> for more examples.
   
 =head1 DESCRIPTION
 
@@ -3918,8 +3938,10 @@ If you use forks for the first time as "use forks" and other loaded code uses
 
 =head1 REQUIRED MODULES
 
+ Acme::Damn (any)
  Attribute::Handlers (any)
  Devel::Required (0.07)
+ Devel::Symdump (any)
  File::Spec (any)
  if (any)
  IO::Socket (1.18)
@@ -4006,6 +4028,57 @@ Forks also offers a full thread deadlock detection engine, to help discover
 and optionally resolve locking issues in threaded applications.  See
 L<forks::shared/"Deadlock detection and resolution"> for more information.
 
+=head2 Perl debugger support
+
+Forks supports basic compabitility with the Perl debugger.  By default, only the
+main thread to the active terminal (TTY), allowing for debugging of scripts where
+child threads are run as background tasks without any extra steps.
+
+If you wish to debug code executed in child threads, you may need to perform a few
+steps to prepare your environment for multi-threaded debugging.
+
+The simplest option is run your script in xterm, as Perl will automatically create
+additional xterm windows for each child thread that encounters a debugger breakpoint.
+
+Otherwise, you will need to manually tell Perl how to map a control of thread to a
+TTY.  Two undocumented features exist in the Perl debugger:
+
+1. Define global variable C<$DB::fork_TTY as the first stem in the subroutine for
+a thread.  The value must be a valid TTY name, such as '/dev/pts/1' or '/dev/ttys001';
+valid names may vary across platforms.  For example:
+
+    threads->new(sub {
+        $DB::fork_TTY = '/dev/tty003'; #tie thread to TTY 3
+        ...
+    });
+    
+Also, the TTY must be active and idle prior to the thread executing.  This normally
+is accomplished by opening a new local or remote session to your machine, identifying
+the TTY via `tty`, and then typing `sleep 10000000` to prevent user input from being
+passed to the command line while you are debugging.
+
+When the debugger halts at a breakpoint in your code in a child thread, all output and
+user input will be managed via this TTY.
+
+2. Define subroutine DB::get_fork_TTY()
+
+This subroutine will execute once each child thread as soon as it has spawned.  Thus,
+you can create a new TTY, or simply bind to an existng, active TTY.  In this subroutine,
+you should define a unique, valid TTY name for the global variable C<$DB::fork_TTY>.
+
+For example, to dynamically spawn a new xterm session and bind a new thread to it, you
+could do the following:
+
+sub DB::get_fork_TTY {
+    open XT, q[3>&1 xterm -title 'Forked Perl debugger' -e sh -c 'tty1>&3;\ sleep 10000000' |];
+    $DB::fork_TTY = <XT>;
+    chomp $DB::fork_TTY;
+}
+
+For more information and tips, refer to this excellent Perl Monks thread:
+L<<a href="http://www.perlmonks.org/?node_id=128283">Debugging Several Proccesses
+at Same Time</a>>.
+
 =head2 INET socket IP mask
 
 For security, inter-thread communication INET sockets only will allow connections
@@ -4047,16 +4120,6 @@ this mode, so it should be quite stable.
 
 Some important items you should be aware of.
 
-=head2 $thr->wantarray() returns void after $thr->join or $thr->detach
-
-Be aware that thread return context is purged and $thr->wantarray will return
-void context after a thread is detached or joined.  This is done to minimize
-memory in programs that spawn many (millions of) threads.  This differs from
-default threads.pm behavior, but should be acceptable as the context no longer
-serves a functional purpose after a join and is the same (void) after a detach.
-Thus, if you still require thread context information after a join, be sure to
-request and store the value of $thr->wantarray on the thread first.
-
 =head2 Signal behavior
 
 Unlike ithreads, signals being sent are standard OS signals, so you should
@@ -4083,20 +4146,22 @@ to immediately exit.
 In native ithreads, END blocks are only executed in the thread in which the
 code was loaded/evaluated.  However, in forks, END blocks are processed in
 all threads that are aware of such code segments (i.e. threads started after
-modules with END blocks are loaded).  This may be considered a bug or a feature,
-depending on what your END blocks are doing (such as closing important external
-resources, for which each thread may have it's own handle.
+modules with END blocks are loaded).  This may be considered a bug or a feature
+depending on what your END blocks are doing, such as closing important external
+resources for which each thread may have it's own handle.
 
 In general, it is a good defensive programming practice to add the following to
 your END blocks when you want to insure sure they only are evaluated in the thread
 that they were created in:
 
-    my $tid = threads->tid if exists $INC{'threads.pm'};
-    END {
-        return if defined($tid) && $tid != threads->tid;
-        # standard end block code goes here
+    {
+        my $tid = threads->tid if exists $INC{'threads.pm'};
+        END {
+            return if defined($tid) && $tid != threads->tid;
+            # standard end block code goes here
+        }
     }
-    
+
 This code is completely compatible with native ithreads.  Note that this
 behavior may change in the future (at least with THREADS_NATIVE_EMULATION mode).
 
@@ -4133,6 +4198,39 @@ few subtle, but important implications:
     results.  Note: if you do use sigaction, please avoid overloading the ABRT
     signal in the main thread, as it is used for process group flow control.
 
+=head2 Modules that modify $SIG{CHLD}
+
+In order to be compatible with perl's core system() function on all platforms,
+extra care has gone into implementing a smarter $SIG{CHLD} in forks.pm.  The
+only functional effect is that you will never need to (or be able to) reap
+threads (processes) if you define your own CHLD handler.
+
+You may define the environment variable THREADS_SIGCHLD_IGNORE to to force 
+forks to use 'IGNORE' on systems where a custom CHLD signal handler has been
+automatically installed to support correct exit code of perl core system()
+function.  Note that this should *not* be necessary unless you encounter specific
+issues with the forks.pm CHLD signal handler.
+
+=head2 $thr->wantarray() returns void after $thr->join or $thr->detach
+
+Be aware that thread return context is purged and $thr->wantarray will return
+void context after a thread is detached or joined.  This is done to minimize
+memory in programs that spawn many (millions of) threads.  This differs from
+default threads.pm behavior, but should be acceptable as the context no longer
+serves a functional purpose after a join or detach.
+Thus, if you still require thread context information after a join, be sure to
+request and store the value of $thr->wantarray first.
+
+=head2 $thr->get_stack_size() returns default after $thr->join or $thr->detach
+
+Thread stack size information is purged and $thr->get_stack_size will return
+the current threads default after a thread is detached or joined.  This is done
+to minimize memory in programs that spawn many (millions of) threads.  This
+differs from default threads.pm behavior, which retains per-thread stack size
+information indefinitely.
+Thus, if you require individual thread stack size information after a join or
+detach, be sure to request and store the value of $thr->get_stack_size first.
+
 =head2 Modules that modify CORE::GLOBAL::fork()
 
 This modules goes to great lengths to insure that normal fork behavior is
@@ -4153,19 +4251,6 @@ Refer to forks.pm source code, *CORE::GLOBAL::fork = sub { ... } definition
 as an example usage.  Please contact the author if you have any questions
 regarding this.
 
-=head2 Modules that modify $SIG{CHLD}
-
-In order to be compatible with perl's core system() function on all platforms,
-extra care has gone into implementing a smarter $SIG{CHLD} in forks.pm.  The
-only functional effect is that you will never need to (or be able to) reap
-threads (processes) if you define your own CHLD handler.
-
-You may define the environment variable THREADS_SIGCHLD_IGNORE to to force 
-forks to use 'IGNORE' on systems where a custom CHLD signal handler has been
-automatically installed to support correct exit code of perl core system()
-function.  Note that this should *not* be necessary unless you encounter specific
-issues with the forks.pm CHLD signal handler.
-
 =head1 CAVEATS
 
 Some caveats that you need to be aware of.
@@ -4183,7 +4268,7 @@ Also, you may wish to try L<forks::BerkeleyDB>, which has shown signifigant perf
 gains and consistent throughoutput in applications requiring high-concurrency shared
 variable access.
 
-=head2 Module CLONE functions and threads
+=head2 Module CLONE & CLONE_SKIP functions and threads
 
 In rare cases, module CLONE functions may have issues when being auto-executed
 by a new thread (forked process).  This only affects modules that use XS data
@@ -4191,9 +4276,27 @@ by a new thread (forked process).  This only affects modules that use XS data
 to CLONE non-fork safe XS data, at worst it may core dump only the newly
 created thread (process).
 
-If you treat such sensitive resources (such as L<DBI> driver instances) as 
+If CLONE_SKIP function is defined in a package and it returns a true value, all
+objects of this class type will be undefined in new threads.  This is generally the
+same behavior as native threads with Perl 5.8.7 and later.  See <<a href="http://perldoc.perl.org/perlmod.html#Making-your-module-threadsafe-threadsafe-thread-safe-module%2c-threadsafe-module%2c-thread-safe-CLONE-CLONE_SKIP-thread-threads-ithread">perlmod</a>>
+for more information.
+
+However, two subtle behavior variances exist relative to native Perl threads:
+
+    1. The actual undefining of variables occurs in the child thread.  This should
+    be portable with all non-perl modules, as long as those module datastructures can be
+    safely garbage collected in the child thread (note that DESTROY will not be called).
+    
+    2. Arrays and hashes will be emptied and unblessed, but value will not be converted
+    to an undef scalar ref.  This differs from native threads, where all references
+    become an undef scalar ref.  This should be generally harmless, as long as you are
+    careful with variable state checks (e.g. check whether reference is still blessed,
+    not whether the reftype has changed, to determine if it is still a valid object
+    in a new thread).
+
+Overall, if you treat potentially sensitive resources (such as L<DBI> driver instances) as 
 non-thread-safe by default and close these resources prior to creating a new
-thread, you should never encounter any issues.
+thread, you should never encounter any portability issues.
 
 =head2 Can't return unshared filehandles from threads
 

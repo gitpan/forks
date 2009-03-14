@@ -4,11 +4,11 @@
 /*
 ----------------------------------------------------------------------
 
-    ppport.h -- Perl/Pollution/Portability Version 3.14
+    ppport.h -- Perl/Pollution/Portability Version 3.16
 
     Automatically created by Devel::PPPort running under perl 5.008008.
 
-    Version 3.x, Copyright (c) 2004-2008, Marcus Holland-Moritz.
+    Version 3.x, Copyright (c) 2004-2009, Marcus Holland-Moritz.
 
     Version 2.x, Copyright (C) 2001, Paul Marquess.
 
@@ -23,8 +23,8 @@ SKIP
 if (@ARGV && $ARGV[0] eq '--unstrip') {
   eval { require Devel::PPPort };
   $@ and die "Cannot require Devel::PPPort, please install.\n";
-  if ($Devel::PPPort::VERSION < 3.14) {
-    die "ppport.h was originally generated with Devel::PPPort 3.14.\n"
+  if (eval $Devel::PPPort::VERSION < 3.16) {
+    die "ppport.h was originally generated with Devel::PPPort 3.16.\n"
       . "Your Devel::PPPort is only version $Devel::PPPort::VERSION.\n"
       . "Please install a newer version, or --unstrip will not work.\n";
   }
@@ -67,6 +67,44 @@ __DATA__*/
 #define PERL_BCDVERSION ((_dpppDEC2BCD(PERL_REVISION)<<24)|(_dpppDEC2BCD(PERL_VERSION)<<12)|_dpppDEC2BCD(PERL_SUBVERSION))
 #if PERL_REVISION != 5
 #error ppport.h only works with Perl version 5
+#endif
+#ifndef dTHR
+#define dTHR dNOOP
+#endif
+#ifndef dTHX
+#define dTHX dNOOP
+#endif
+#ifndef dTHXa
+#define dTHXa(x) dNOOP
+#endif
+#ifndef pTHX
+#define pTHX void
+#endif
+#ifndef pTHX_
+#define pTHX_
+#endif
+#ifndef aTHX
+#define aTHX
+#endif
+#ifndef aTHX_
+#define aTHX_
+#endif
+#if (PERL_BCDVERSION < 0x5006000)
+#ifdef USE_THREADS
+#define aTHXR thr
+#define aTHXR_ thr,
+#else
+#define aTHXR
+#define aTHXR_
+#endif
+#define dTHXR dTHR
+#else
+#define aTHXR aTHX
+#define aTHXR_ aTHX_
+#define dTHXR dTHX
+#endif
+#ifndef dTHXoa
+#define dTHXoa(x) dTHXa(x)
 #endif
 #ifdef I_LIMITS
 #include <limits.h>
@@ -562,6 +600,9 @@ typedef NVTYPE NV;
 #ifndef SAVE_DEFSV
 #define SAVE_DEFSV SAVESPTR(GvSV(PL_defgv))
 #endif
+#ifndef DEFSV_set
+#define DEFSV_set(sv) (DEFSV = (sv))
+#endif
 #ifndef AvFILLp
 #define AvFILLp AvFILL
 #endif
@@ -625,6 +666,9 @@ return; \
 #ifndef UTF8_MAXBYTES
 #define UTF8_MAXBYTES UTF8_MAXLEN
 #endif
+#ifndef CPERLscope
+#define CPERLscope(x) x
+#endif
 #ifndef PERL_HASH
 #define PERL_HASH(hash,str,len) \
 STMT_START { \
@@ -635,6 +679,77 @@ while (i_PeRlHaSh--) \
 hash_PeRlHaSh = hash_PeRlHaSh * 33 + *s_PeRlHaSh++; \
 (hash) = hash_PeRlHaSh; \
 } STMT_END
+#endif
+#ifndef PERLIO_FUNCS_DECL
+#ifdef PERLIO_FUNCS_CONST
+#define PERLIO_FUNCS_DECL(funcs) const PerlIO_funcs funcs
+#define PERLIO_FUNCS_CAST(funcs) (PerlIO_funcs*)(funcs)
+#else
+#define PERLIO_FUNCS_DECL(funcs) PerlIO_funcs funcs
+#define PERLIO_FUNCS_CAST(funcs) (funcs)
+#endif
+#endif
+#if (PERL_BCDVERSION < 0x5009003)
+#ifdef ARGSproto
+typedef OP* (CPERLscope(*Perl_ppaddr_t))(ARGSproto);
+#else
+typedef OP* (CPERLscope(*Perl_ppaddr_t))(pTHX);
+#endif
+typedef OP* (CPERLscope(*Perl_check_t)) (pTHX_ OP*);
+#endif
+#ifndef isPSXSPC
+#define isPSXSPC(c) (isSPACE(c) || (c) == '\v')
+#endif
+#ifndef isBLANK
+#define isBLANK(c) ((c) == ' ' || (c) == '\t')
+#endif
+#ifdef EBCDIC
+#ifndef isALNUMC
+#define isALNUMC(c) isalnum(c)
+#endif
+#ifndef isASCII
+#define isASCII(c) isascii(c)
+#endif
+#ifndef isCNTRL
+#define isCNTRL(c) iscntrl(c)
+#endif
+#ifndef isGRAPH
+#define isGRAPH(c) isgraph(c)
+#endif
+#ifndef isPRINT
+#define isPRINT(c) isprint(c)
+#endif
+#ifndef isPUNCT
+#define isPUNCT(c) ispunct(c)
+#endif
+#ifndef isXDIGIT
+#define isXDIGIT(c) isxdigit(c)
+#endif
+#else
+#if (PERL_BCDVERSION < 0x5010000)
+#undef isPRINT
+#endif
+#ifndef isALNUMC
+#define isALNUMC(c) (isALPHA(c) || isDIGIT(c))
+#endif
+#ifndef isASCII
+#define isASCII(c) ((c) <= 127)
+#endif
+#ifndef isCNTRL
+#define isCNTRL(c) ((c) < ' ' || (c) == 127)
+#endif
+#ifndef isGRAPH
+#define isGRAPH(c) (isALNUM(c) || isPUNCT(c))
+#endif
+#ifndef isPRINT
+#define isPRINT(c) (((c) >= 32 && (c) < 127))
+#endif
+#ifndef isPUNCT
+#define isPUNCT(c) (((c) >= 33 && (c) <= 47) || ((c) >= 58 && (c) <= 64) || ((c) >= 91 && (c) <= 96) || ((c) >= 123 && (c) <= 126))
+#endif
+#ifndef isXDIGIT
+#define isXDIGIT(c) (isDIGIT(c) || ((c) >= 'a' && (c) <= 'f') || ((c) >= 'A' && (c) <= 'F'))
+#endif
 #endif
 #ifndef PERL_SIGNALS_UNSAFE_FLAG
 #define PERL_SIGNALS_UNSAFE_FLAG 0x0001
@@ -662,6 +777,8 @@ extern U32 DPPP_(my_PL_signals);
 #define PL_DBsub DBsub
 #define PL_DBtrace DBtrace
 #define PL_Sv Sv
+#define PL_bufend bufend
+#define PL_bufptr bufptr
 #define PL_compiling compiling
 #define PL_copline copline
 #define PL_curcop curcop
@@ -676,6 +793,9 @@ extern U32 DPPP_(my_PL_signals);
 #define PL_hexdigit hexdigit
 #define PL_hints hints
 #define PL_laststatval laststatval
+#define PL_lex_state lex_state
+#define PL_lex_stuff lex_stuff
+#define PL_linestr linestr
 #define PL_na na
 #define PL_perl_destruct_level perl_destruct_level
 #define PL_perldb perldb
@@ -691,50 +811,42 @@ extern U32 DPPP_(my_PL_signals);
 #define PL_sv_yes sv_yes
 #define PL_tainted tainted
 #define PL_tainting tainting
+#define PL_tokenbuf tokenbuf
 #endif
 #if (PERL_BCDVERSION >= 0x5009005)
-#define PL_expect (PL_parser ? PL_parser->expect : 0)
-#define PL_copline (PL_parser ? PL_parser->copline : 0)
-#define PL_rsfp (PL_parser ? PL_parser->rsfp : (PerlIO *) 0)
-#define PL_rsfp_filters (PL_parser ? PL_parser->rsfp_filters : (AV *) 0)
-#endif
-#ifndef dTHR
-#define dTHR dNOOP
-#endif
-#ifndef dTHX
-#define dTHX dNOOP
-#endif
-#ifndef dTHXa
-#define dTHXa(x) dNOOP
-#endif
-#ifndef pTHX
-#define pTHX void
-#endif
-#ifndef pTHX_
-#define pTHX_
-#endif
-#ifndef aTHX
-#define aTHX
-#endif
-#ifndef aTHX_
-#define aTHX_
-#endif
-#if (PERL_BCDVERSION < 0x5006000)
-#ifdef USE_THREADS
-#define aTHXR thr
-#define aTHXR_ thr,
+#ifdef DPPP_PL_parser_NO_DUMMY
+#define D_PPP_my_PL_parser_var(var) ((PL_parser ? PL_parser : \
+(croak("panic: PL_parser == NULL in %s:%d", \
+__FILE__, __LINE__), (yy_parser *) NULL))->var)
 #else
-#define aTHXR
-#define aTHXR_
-#endif
-#define dTHXR dTHR
+#ifdef DPPP_PL_parser_NO_DUMMY_WARNING
+#define D_PPP_parser_dummy_warning(var)
 #else
-#define aTHXR aTHX
-#define aTHXR_ aTHX_
-#define dTHXR dTHX
+#define D_PPP_parser_dummy_warning(var) \
+warn("warning: dummy PL_" #var " used in %s:%d", __FILE__, __LINE__),
 #endif
-#ifndef dTHXoa
-#define dTHXoa(x) dTHXa(x)
+#define D_PPP_my_PL_parser_var(var) ((PL_parser ? PL_parser : \
+(D_PPP_parser_dummy_warning(var) &DPPP_(dummy_PL_parser)))->var)
+#if defined(NEED_PL_parser)
+static yy_parser DPPP_(dummy_PL_parser);
+#elif defined(NEED_PL_parser_GLOBAL)
+yy_parser DPPP_(dummy_PL_parser);
+#else
+extern yy_parser DPPP_(dummy_PL_parser);
+#endif
+#endif
+#define PL_expect D_PPP_my_PL_parser_var(expect)
+#define PL_copline D_PPP_my_PL_parser_var(copline)
+#define PL_rsfp D_PPP_my_PL_parser_var(rsfp)
+#define PL_rsfp_filters D_PPP_my_PL_parser_var(rsfp_filters)
+#define PL_linestr D_PPP_my_PL_parser_var(linestr)
+#define PL_bufptr D_PPP_my_PL_parser_var(bufptr)
+#define PL_bufend D_PPP_my_PL_parser_var(bufend)
+#define PL_lex_state D_PPP_my_PL_parser_var(lex_state)
+#define PL_lex_stuff D_PPP_my_PL_parser_var(lex_stuff)
+#define PL_tokenbuf D_PPP_my_PL_parser_var(tokenbuf)
+#else
+#define PL_parser ((void *) 1)
 #endif
 #ifndef mPUSHs
 #define mPUSHs(s) PUSHs(sv_2mortal(s))
@@ -795,6 +907,19 @@ extern U32 DPPP_(my_PL_signals);
 #endif
 #ifndef PERL_LOADMOD_IMPORT_OPS
 #define PERL_LOADMOD_IMPORT_OPS 0x4
+#endif
+#ifndef G_METHOD
+#define G_METHOD 64
+#ifdef call_sv
+#undef call_sv
+#endif
+#if (PERL_BCDVERSION < 0x5006000)
+#define call_sv(sv, flags) ((flags) & G_METHOD ? perl_call_method((char *) SvPV_nolen_const(sv), \
+(flags) & ~G_METHOD) : perl_call_sv(sv, flags))
+#else
+#define call_sv(sv, flags) ((flags) & G_METHOD ? Perl_call_method(aTHX_ (char *) SvPV_nolen_const(sv), \
+(flags) & ~G_METHOD) : Perl_call_sv(aTHX_ sv, flags))
+#endif
 #endif
 #ifndef eval_pv
 #if defined(NEED_eval_pv)
@@ -947,6 +1072,7 @@ extern void DPPP_(my_newCONSTSUB)(HV *stash, const char *name, SV *sv);
 #define newCONSTSUB(a,b,c) DPPP_(my_newCONSTSUB)(aTHX_ a,b,c)
 #define Perl_newCONSTSUB DPPP_(my_newCONSTSUB)
 #if defined(NEED_newCONSTSUB) || defined(NEED_newCONSTSUB_GLOBAL)
+#define D_PPP_PL_copline PL_copline
 void
 DPPP_(my_newCONSTSUB)(HV *stash, const char *name, SV *sv)
 {
@@ -954,7 +1080,7 @@ U32 oldhints = PL_hints;
 HV *old_cop_stash = PL_curcop->cop_stash;
 HV *old_curstash = PL_curstash;
 line_t oldline = PL_curcop->cop_line;
-PL_curcop->cop_line = PL_copline;
+PL_curcop->cop_line = D_PPP_PL_copline;
 PL_hints &= ~HINT_BLOCK_SCOPE;
 if (stash)
 PL_curstash = PL_curcop->cop_stash = stash;
@@ -1125,6 +1251,11 @@ if (_sv) \
 #ifndef SvREFCNT_inc_simple_void_NN
 #define SvREFCNT_inc_simple_void_NN(sv) (void)(++SvREFCNT((SV*)(sv)))
 #endif
+#if (PERL_BCDVERSION < 0x5006000)
+#define D_PPP_CONSTPV_ARG(x) ((char *) (x))
+#else
+#define D_PPP_CONSTPV_ARG(x) (x)
+#endif
 #ifndef newSVpvn
 #define newSVpvn(data,len) ((data) \
 ? ((len) ? newSVpv((data), (len)) : newSVpv("", 0)) \
@@ -1138,10 +1269,10 @@ if (_sv) \
 #endif
 #ifndef newSVpvn_flags
 #if defined(NEED_newSVpvn_flags)
-static SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char * s, STRLEN len, U32 flags);
+static SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char *s, STRLEN len, U32 flags);
 static
 #else
-extern SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char * s, STRLEN len, U32 flags);
+extern SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char *s, STRLEN len, U32 flags);
 #endif
 #ifdef newSVpvn_flags
 #undef newSVpvn_flags
@@ -1152,7 +1283,7 @@ extern SV * DPPP_(my_newSVpvn_flags)(pTHX_ const char * s, STRLEN len, U32 flags
 SV *
 DPPP_(my_newSVpvn_flags)(pTHX_ const char *s, STRLEN len, U32 flags)
 {
-SV *sv = newSVpvn(s, len);
+SV *sv = newSVpvn(D_PPP_CONSTPV_ARG(s), len);
 SvFLAGS(sv) |= (flags & SVf_UTF8);
 return (flags & SVs_TEMP) ? sv_2mortal(sv) : sv;
 }
@@ -1170,10 +1301,10 @@ return (flags & SVs_TEMP) ? sv_2mortal(sv) : sv;
 #ifdef SvPVbyte
 #if (PERL_BCDVERSION < 0x5007000)
 #if defined(NEED_sv_2pvbyte)
-static char * DPPP_(my_sv_2pvbyte)(pTHX_ SV * sv, STRLEN * lp);
+static char * DPPP_(my_sv_2pvbyte)(pTHX_ SV *sv, STRLEN *lp);
 static
 #else
-extern char * DPPP_(my_sv_2pvbyte)(pTHX_ SV * sv, STRLEN * lp);
+extern char * DPPP_(my_sv_2pvbyte)(pTHX_ SV *sv, STRLEN *lp);
 #endif
 #ifdef sv_2pvbyte
 #undef sv_2pvbyte
@@ -1232,10 +1363,10 @@ return SvPV(sv,*lp);
 #endif
 #if (PERL_BCDVERSION < 0x5007002)
 #if defined(NEED_sv_2pv_flags)
-static char * DPPP_(my_sv_2pv_flags)(pTHX_ SV * sv, STRLEN * lp, I32 flags);
+static char * DPPP_(my_sv_2pv_flags)(pTHX_ SV *sv, STRLEN *lp, I32 flags);
 static
 #else
-extern char * DPPP_(my_sv_2pv_flags)(pTHX_ SV * sv, STRLEN * lp, I32 flags);
+extern char * DPPP_(my_sv_2pv_flags)(pTHX_ SV *sv, STRLEN *lp, I32 flags);
 #endif
 #ifdef sv_2pv_flags
 #undef sv_2pv_flags
@@ -1251,10 +1382,10 @@ return sv_2pv(sv, lp ? lp : &n_a);
 }
 #endif
 #if defined(NEED_sv_pvn_force_flags)
-static char * DPPP_(my_sv_pvn_force_flags)(pTHX_ SV * sv, STRLEN * lp, I32 flags);
+static char * DPPP_(my_sv_pvn_force_flags)(pTHX_ SV *sv, STRLEN *lp, I32 flags);
 static
 #else
-extern char * DPPP_(my_sv_pvn_force_flags)(pTHX_ SV * sv, STRLEN * lp, I32 flags);
+extern char * DPPP_(my_sv_pvn_force_flags)(pTHX_ SV *sv, STRLEN *lp, I32 flags);
 #endif
 #ifdef sv_pvn_force_flags
 #undef sv_pvn_force_flags
@@ -1354,6 +1485,12 @@ sv_2pv_flags(sv, &lp, flags|SV_MUTABLE_RETURN))
 #ifndef SvPV_nomg_const_nolen
 #define SvPV_nomg_const_nolen(sv) SvPV_flags_const_nolen(sv, 0)
 #endif
+#ifndef SvPV_renew
+#define SvPV_renew(sv,n) STMT_START { SvLEN_set(sv, n); \
+SvPV_set((sv), (char *) saferealloc( \
+(Malloc_t)SvPVX(sv), (MEM_SIZE)((n)))); \
+} STMT_END
+#endif
 #ifndef SvMAGIC_set
 #define SvMAGIC_set(sv, val) \
 STMT_START { assert(SvTYPE(sv) >= SVt_PVMG); \
@@ -1404,10 +1541,10 @@ STMT_START { assert(SvTYPE(sv) == SVt_IV || SvTYPE(sv) >= SVt_PVIV); \
 #endif
 #if (PERL_BCDVERSION >= 0x5004000) && !defined(vnewSVpvf)
 #if defined(NEED_vnewSVpvf)
-static SV * DPPP_(my_vnewSVpvf)(pTHX_ const char * pat, va_list * args);
+static SV * DPPP_(my_vnewSVpvf)(pTHX_ const char *pat, va_list *args);
 static
 #else
-extern SV * DPPP_(my_vnewSVpvf)(pTHX_ const char * pat, va_list * args);
+extern SV * DPPP_(my_vnewSVpvf)(pTHX_ const char *pat, va_list *args);
 #endif
 #ifdef vnewSVpvf
 #undef vnewSVpvf
@@ -1432,10 +1569,10 @@ return sv;
 #endif
 #if (PERL_BCDVERSION >= 0x5004000) && !defined(sv_catpvf_mg)
 #if defined(NEED_sv_catpvf_mg)
-static void DPPP_(my_sv_catpvf_mg)(pTHX_ SV * sv, const char * pat, ...);
+static void DPPP_(my_sv_catpvf_mg)(pTHX_ SV *sv, const char *pat, ...);
 static
 #else
-extern void DPPP_(my_sv_catpvf_mg)(pTHX_ SV * sv, const char * pat, ...);
+extern void DPPP_(my_sv_catpvf_mg)(pTHX_ SV *sv, const char *pat, ...);
 #endif
 #define Perl_sv_catpvf_mg DPPP_(my_sv_catpvf_mg)
 #if defined(NEED_sv_catpvf_mg) || defined(NEED_sv_catpvf_mg_GLOBAL)
@@ -1453,10 +1590,10 @@ va_end(args);
 #ifdef PERL_IMPLICIT_CONTEXT
 #if (PERL_BCDVERSION >= 0x5004000) && !defined(sv_catpvf_mg_nocontext)
 #if defined(NEED_sv_catpvf_mg_nocontext)
-static void DPPP_(my_sv_catpvf_mg_nocontext)(SV * sv, const char * pat, ...);
+static void DPPP_(my_sv_catpvf_mg_nocontext)(SV *sv, const char *pat, ...);
 static
 #else
-extern void DPPP_(my_sv_catpvf_mg_nocontext)(SV * sv, const char * pat, ...);
+extern void DPPP_(my_sv_catpvf_mg_nocontext)(SV *sv, const char *pat, ...);
 #endif
 #define sv_catpvf_mg_nocontext DPPP_(my_sv_catpvf_mg_nocontext)
 #define Perl_sv_catpvf_mg_nocontext DPPP_(my_sv_catpvf_mg_nocontext)
@@ -1490,10 +1627,10 @@ SvSETMAGIC(sv); \
 #endif
 #if (PERL_BCDVERSION >= 0x5004000) && !defined(sv_setpvf_mg)
 #if defined(NEED_sv_setpvf_mg)
-static void DPPP_(my_sv_setpvf_mg)(pTHX_ SV * sv, const char * pat, ...);
+static void DPPP_(my_sv_setpvf_mg)(pTHX_ SV *sv, const char *pat, ...);
 static
 #else
-extern void DPPP_(my_sv_setpvf_mg)(pTHX_ SV * sv, const char * pat, ...);
+extern void DPPP_(my_sv_setpvf_mg)(pTHX_ SV *sv, const char *pat, ...);
 #endif
 #define Perl_sv_setpvf_mg DPPP_(my_sv_setpvf_mg)
 #if defined(NEED_sv_setpvf_mg) || defined(NEED_sv_setpvf_mg_GLOBAL)
@@ -1511,10 +1648,10 @@ va_end(args);
 #ifdef PERL_IMPLICIT_CONTEXT
 #if (PERL_BCDVERSION >= 0x5004000) && !defined(sv_setpvf_mg_nocontext)
 #if defined(NEED_sv_setpvf_mg_nocontext)
-static void DPPP_(my_sv_setpvf_mg_nocontext)(SV * sv, const char * pat, ...);
+static void DPPP_(my_sv_setpvf_mg_nocontext)(SV *sv, const char *pat, ...);
 static
 #else
-extern void DPPP_(my_sv_setpvf_mg_nocontext)(SV * sv, const char * pat, ...);
+extern void DPPP_(my_sv_setpvf_mg_nocontext)(SV *sv, const char *pat, ...);
 #endif
 #define sv_setpvf_mg_nocontext DPPP_(my_sv_setpvf_mg_nocontext)
 #define Perl_sv_setpvf_mg_nocontext DPPP_(my_sv_setpvf_mg_nocontext)
@@ -2623,9 +2760,30 @@ retval = vsnprintf(buffer, len, format, ap);
 retval = vsprintf(buffer, format, ap);
 #endif
 va_end(ap);
-if (retval >= (int)len)
+if (retval < 0 || (len > 0 && (Size_t)retval >= len))
 Perl_croak(aTHX_ "panic: my_snprintf buffer overflow");
 return retval;
+}
+#endif
+#endif
+#if !defined(my_sprintf)
+#if defined(NEED_my_sprintf)
+static int DPPP_(my_my_sprintf)(char * buffer, const char * pat, ...);
+static
+#else
+extern int DPPP_(my_my_sprintf)(char * buffer, const char * pat, ...);
+#endif
+#define my_sprintf DPPP_(my_my_sprintf)
+#define Perl_my_sprintf DPPP_(my_my_sprintf)
+#if defined(NEED_my_sprintf) || defined(NEED_my_sprintf_GLOBAL)
+int
+DPPP_(my_my_sprintf)(char *buffer, const char* pat, ...)
+{
+va_list args;
+va_start(args, pat);
+vsprintf(buffer, pat, args);
+va_end(args);
+return strlen(buffer);
 }
 #endif
 #endif
@@ -2690,6 +2848,212 @@ memcpy(dst, src, copy);
 dst[copy] = '\0';
 }
 return length;
+}
+#endif
+#endif
+#ifndef PERL_PV_ESCAPE_QUOTE
+#define PERL_PV_ESCAPE_QUOTE 0x0001
+#endif
+#ifndef PERL_PV_PRETTY_QUOTE
+#define PERL_PV_PRETTY_QUOTE PERL_PV_ESCAPE_QUOTE
+#endif
+#ifndef PERL_PV_PRETTY_ELLIPSES
+#define PERL_PV_PRETTY_ELLIPSES 0x0002
+#endif
+#ifndef PERL_PV_PRETTY_LTGT
+#define PERL_PV_PRETTY_LTGT 0x0004
+#endif
+#ifndef PERL_PV_ESCAPE_FIRSTCHAR
+#define PERL_PV_ESCAPE_FIRSTCHAR 0x0008
+#endif
+#ifndef PERL_PV_ESCAPE_UNI
+#define PERL_PV_ESCAPE_UNI 0x0100
+#endif
+#ifndef PERL_PV_ESCAPE_UNI_DETECT
+#define PERL_PV_ESCAPE_UNI_DETECT 0x0200
+#endif
+#ifndef PERL_PV_ESCAPE_ALL
+#define PERL_PV_ESCAPE_ALL 0x1000
+#endif
+#ifndef PERL_PV_ESCAPE_NOBACKSLASH
+#define PERL_PV_ESCAPE_NOBACKSLASH 0x2000
+#endif
+#ifndef PERL_PV_ESCAPE_NOCLEAR
+#define PERL_PV_ESCAPE_NOCLEAR 0x4000
+#endif
+#ifndef PERL_PV_ESCAPE_RE
+#define PERL_PV_ESCAPE_RE 0x8000
+#endif
+#ifndef PERL_PV_PRETTY_NOCLEAR
+#define PERL_PV_PRETTY_NOCLEAR PERL_PV_ESCAPE_NOCLEAR
+#endif
+#ifndef PERL_PV_PRETTY_DUMP
+#define PERL_PV_PRETTY_DUMP PERL_PV_PRETTY_ELLIPSES|PERL_PV_PRETTY_QUOTE
+#endif
+#ifndef PERL_PV_PRETTY_REGPROP
+#define PERL_PV_PRETTY_REGPROP PERL_PV_PRETTY_ELLIPSES|PERL_PV_PRETTY_LTGT|PERL_PV_ESCAPE_RE
+#endif
+#ifndef pv_escape
+#if defined(NEED_pv_escape)
+static char * DPPP_(my_pv_escape)(pTHX_ SV * dsv, char const * const str, const STRLEN count, const STRLEN max, STRLEN * const escaped, const U32 flags);
+static
+#else
+extern char * DPPP_(my_pv_escape)(pTHX_ SV * dsv, char const * const str, const STRLEN count, const STRLEN max, STRLEN * const escaped, const U32 flags);
+#endif
+#ifdef pv_escape
+#undef pv_escape
+#endif
+#define pv_escape(a,b,c,d,e,f) DPPP_(my_pv_escape)(aTHX_ a,b,c,d,e,f)
+#define Perl_pv_escape DPPP_(my_pv_escape)
+#if defined(NEED_pv_escape) || defined(NEED_pv_escape_GLOBAL)
+char *
+DPPP_(my_pv_escape)(pTHX_ SV *dsv, char const * const str,
+const STRLEN count, const STRLEN max,
+STRLEN * const escaped, const U32 flags)
+{
+const char esc = flags & PERL_PV_ESCAPE_RE ? '%' : '\\';
+const char dq = flags & PERL_PV_ESCAPE_QUOTE ? '"' : esc;
+char octbuf[32] = "%123456789ABCDF";
+STRLEN wrote = 0;
+STRLEN chsize = 0;
+STRLEN readsize = 1;
+#if defined(is_utf8_string) && defined(utf8_to_uvchr)
+bool isuni = flags & PERL_PV_ESCAPE_UNI ? 1 : 0;
+#endif
+const char *pv = str;
+const char * const end = pv + count;
+octbuf[0] = esc;
+if (!(flags & PERL_PV_ESCAPE_NOCLEAR))
+sv_setpvs(dsv, "");
+#if defined(is_utf8_string) && defined(utf8_to_uvchr)
+if ((flags & PERL_PV_ESCAPE_UNI_DETECT) && is_utf8_string((U8*)pv, count))
+isuni = 1;
+#endif
+for (; pv < end && (!max || wrote < max) ; pv += readsize) {
+const UV u =
+#if defined(is_utf8_string) && defined(utf8_to_uvchr)
+isuni ? utf8_to_uvchr((U8*)pv, &readsize) :
+#endif
+(U8)*pv;
+const U8 c = (U8)u & 0xFF;
+if (u > 255 || (flags & PERL_PV_ESCAPE_ALL)) {
+if (flags & PERL_PV_ESCAPE_FIRSTCHAR)
+chsize = my_snprintf(octbuf, sizeof octbuf,
+"%"UVxf, u);
+else
+chsize = my_snprintf(octbuf, sizeof octbuf,
+"%cx{%"UVxf"}", esc, u);
+} else if (flags & PERL_PV_ESCAPE_NOBACKSLASH) {
+chsize = 1;
+} else {
+if (c == dq || c == esc || !isPRINT(c)) {
+chsize = 2;
+switch (c) {
+case '\\' :
+case '%' : if (c == esc)
+octbuf[1] = esc;
+else
+chsize = 1;
+break;
+case '\v' : octbuf[1] = 'v'; break;
+case '\t' : octbuf[1] = 't'; break;
+case '\r' : octbuf[1] = 'r'; break;
+case '\n' : octbuf[1] = 'n'; break;
+case '\f' : octbuf[1] = 'f'; break;
+case '"' : if (dq == '"')
+octbuf[1] = '"';
+else
+chsize = 1;
+break;
+default: chsize = my_snprintf(octbuf, sizeof octbuf,
+pv < end && isDIGIT((U8)*(pv+readsize))
+? "%c%03o" : "%c%o", esc, c);
+}
+} else {
+chsize = 1;
+}
+}
+if (max && wrote + chsize > max) {
+break;
+} else if (chsize > 1) {
+sv_catpvn(dsv, octbuf, chsize);
+wrote += chsize;
+} else {
+char tmp[2];
+my_snprintf(tmp, sizeof tmp, "%c", c);
+sv_catpvn(dsv, tmp, 1);
+wrote++;
+}
+if (flags & PERL_PV_ESCAPE_FIRSTCHAR)
+break;
+}
+if (escaped != NULL)
+*escaped= pv - str;
+return SvPVX(dsv);
+}
+#endif
+#endif
+#ifndef pv_pretty
+#if defined(NEED_pv_pretty)
+static char * DPPP_(my_pv_pretty)(pTHX_ SV * dsv, char const * const str, const STRLEN count, const STRLEN max, char const * const start_color, char const * const end_color, const U32 flags);
+static
+#else
+extern char * DPPP_(my_pv_pretty)(pTHX_ SV * dsv, char const * const str, const STRLEN count, const STRLEN max, char const * const start_color, char const * const end_color, const U32 flags);
+#endif
+#ifdef pv_pretty
+#undef pv_pretty
+#endif
+#define pv_pretty(a,b,c,d,e,f,g) DPPP_(my_pv_pretty)(aTHX_ a,b,c,d,e,f,g)
+#define Perl_pv_pretty DPPP_(my_pv_pretty)
+#if defined(NEED_pv_pretty) || defined(NEED_pv_pretty_GLOBAL)
+char *
+DPPP_(my_pv_pretty)(pTHX_ SV *dsv, char const * const str, const STRLEN count,
+const STRLEN max, char const * const start_color, char const * const end_color,
+const U32 flags)
+{
+const U8 dq = (flags & PERL_PV_PRETTY_QUOTE) ? '"' : '%';
+STRLEN escaped;
+if (!(flags & PERL_PV_PRETTY_NOCLEAR))
+sv_setpvs(dsv, "");
+if (dq == '"')
+sv_catpvs(dsv, "\"");
+else if (flags & PERL_PV_PRETTY_LTGT)
+sv_catpvs(dsv, "<");
+if (start_color != NULL)
+sv_catpv(dsv, D_PPP_CONSTPV_ARG(start_color));
+pv_escape(dsv, str, count, max, &escaped, flags | PERL_PV_ESCAPE_NOCLEAR);
+if (end_color != NULL)
+sv_catpv(dsv, D_PPP_CONSTPV_ARG(end_color));
+if (dq == '"')
+sv_catpvs(dsv, "\"");
+else if (flags & PERL_PV_PRETTY_LTGT)
+sv_catpvs(dsv, ">");
+if ((flags & PERL_PV_PRETTY_ELLIPSES) && escaped < count)
+sv_catpvs(dsv, "...");
+return SvPVX(dsv);
+}
+#endif
+#endif
+#ifndef pv_display
+#if defined(NEED_pv_display)
+static char * DPPP_(my_pv_display)(pTHX_ SV * dsv, const char * pv, STRLEN cur, STRLEN len, STRLEN pvlim);
+static
+#else
+extern char * DPPP_(my_pv_display)(pTHX_ SV * dsv, const char * pv, STRLEN cur, STRLEN len, STRLEN pvlim);
+#endif
+#ifdef pv_display
+#undef pv_display
+#endif
+#define pv_display(a,b,c,d,e) DPPP_(my_pv_display)(aTHX_ a,b,c,d,e)
+#define Perl_pv_display DPPP_(my_pv_display)
+#if defined(NEED_pv_display) || defined(NEED_pv_display_GLOBAL)
+char *
+DPPP_(my_pv_display)(pTHX_ SV *dsv, const char *pv, STRLEN cur, STRLEN len, STRLEN pvlim)
+{
+pv_pretty(dsv, pv, cur, pvlim, NULL, NULL, PERL_PV_PRETTY_DUMP);
+if (len > cur && pv[cur] == '\0')
+sv_catpvs(dsv, "\\0");
+return SvPVX(dsv);
 }
 #endif
 #endif

@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.30';
+$VERSION = '0.31';
 
 use Config ();
 
@@ -35,7 +35,7 @@ package
 # Do everything by the book from now on
 
 BEGIN {
-    $VERSION  = '1.27';
+    $VERSION  = '1.28';
     $threads_shared = $threads_shared = 1;
 }
 use strict;
@@ -838,6 +838,19 @@ sub _bless {
     my $it  = shift;
     my $ref = reftype $it;
     my $object;
+
+# If this package could CLONE_SKIP (don't execute now)
+#  Cache the CLONE_SKIP method
+#  Store a weak reference to this object
+
+    my $package = $_[0];
+    if (my $code = exists( $threads::CLONE_SKIP{$package} )
+          ? $threads::CLONE_SKIP{$package} : eval { $package->can( 'CLONE_SKIP' ) }) {
+        $threads::CLONE_SKIP{$package} = $code unless exists $threads::CLONE_SKIP{$package};
+        my $addr = refaddr $it;
+        $threads::CLONE_SKIP_REF{$package}{$addr} = \$it;
+        Scalar::Util::weaken(${$threads::CLONE_SKIP_REF{$package}{$addr}});
+    }
 
 # Obtain the object
 
