@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.31';
+$VERSION = '0.32';
 
 # Allow external modules to defer shared variable init at require
 
@@ -3747,7 +3747,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.31.
+This documentation describes version 0.32.
 
 =head1 SYNOPSIS
 
@@ -4043,7 +4043,7 @@ additional xterm windows for each child thread that encounters a debugger breakp
 Otherwise, you will need to manually tell Perl how to map a control of thread to a
 TTY.  Two undocumented features exist in the Perl debugger:
 
-1. Define global variable C<$DB::fork_TTY as the first stem in the subroutine for
+1. Define global variable C<$DB::fork_TTY> as the first stem in the subroutine for
 a thread.  The value must be a valid TTY name, such as '/dev/pts/1' or '/dev/ttys001';
 valid names may vary across platforms.  For example:
 

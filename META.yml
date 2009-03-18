@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               forks
-version:            0.31
+version:            0.32
 abstract:           forks - emulate threads with fork
 author:
     - Eric Rybski (rybskej@yahoo.com)

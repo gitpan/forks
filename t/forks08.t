@@ -67,29 +67,29 @@ $t1 = threads->new(sub { sleep 1; });
 $time = Time::HiRes::sleep 5;
 $t1->join();
 $time_int = sprintf("%.0f", $time);
-cmp_ok($time_int, '==', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
+cmp_ok($time_int, '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
 cmp_ok($time_int, '<=', 7,'check that main thread did not sleep too long after CHLD signal'); #clock drift / signal delay tolerance
 
 # Check that main thread waits full 5 seconds after CHLD signal
 SKIP: {
-    skip('usleep not supported on this platform',1) unless &Time::HiRes::d_usleep && defined(my $t = eval { Time::HiRes::usleep(0) }) && !$@;
+    skip('usleep not supported on this platform',1) unless &Time::HiRes::d_usleep && defined(my $t = eval { &Time::HiRes::usleep(0) }) && !$@;
     $t1 = threads->new(sub { sleep 1; });
-    $time = Time::HiRes::usleep 5000000;
+    $time = &Time::HiRes::usleep(5000000);
     $t1->join();
     $time_int = sprintf("%.0f", $time / 10**6);
-    cmp_ok($time_int, '==', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
+    cmp_ok($time_int, '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
     cmp_ok($time_int, '<=', 7,'check that main thread did not sleep too long after CHLD signal'); #clock drift / signal delay tolerance
 }
 
 # Check that main thread waits full 5 seconds after CHLD signal
 SKIP: {
     skip('Time::HiRes::nanosleep function not supported on this platform',1)
-        unless &Time::HiRes::d_nanosleep && defined(my $t = eval { Time::HiRes::nanosleep(0) }) && !$@;
+        unless &Time::HiRes::d_nanosleep && defined(my $t = eval { &Time::HiRes::nanosleep(0) }) && !$@;
     $t1 = threads->new(sub { sleep 1; });
-    $time = Time::HiRes::nanosleep 5000000000;
+    $time = &Time::HiRes::nanosleep(5000000000);
     $t1->join();
     $time_int = sprintf("%.0f", ($time / 10**9));
-    cmp_ok($time_int, '==', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
+    cmp_ok($time_int, '>=', 5,'check that main thread sleeps full 5 seconds after CHLD signal');
     cmp_ok($time_int, '<=', 7,'check that main thread did not sleep too long after CHLD signal'); #clock drift / signal delay tolerance
 }
 
@@ -100,7 +100,7 @@ $t1 = threads->new(sub { sleep 1; });
 $time = sleep 5;
 $t1->join();
 $time_int = sprintf("%.0f", $time);
-cmp_ok($time_int, '==', 5,'check that main thread sleeps full 5 seconds after custom CHLD signal');
+cmp_ok($time_int, '>=', 5,'check that main thread sleeps full 5 seconds after custom CHLD signal');
 cmp_ok($time_int, '<=', 7,'check that main thread did not sleep too long after CHLD signal'); #clock drift / signal delay tolerance
 cmp_ok($cnt, '>=', 1,'check that custom CHLD signal was called');
 

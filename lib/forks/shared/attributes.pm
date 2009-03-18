@@ -1,6 +1,6 @@
 package
     forks::shared::attributes; #hide from PAUSE
-$VERSION = '0.31';
+$VERSION = '0.32';
 
 use Attribute::Handlers;
 

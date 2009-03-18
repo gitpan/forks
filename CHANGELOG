@@ -1,3 +1,10 @@
+0.32
+	***** Miscellaneous changes *****
+	
+	Minor change to forks08.t nanosleep usage when not available, to avoid srror.
+	
+	Made time tolerances consistent throughout forks08.t.
+	
 0.31	March 14 2009
 	***** Threads API consistency changes *****
 	
