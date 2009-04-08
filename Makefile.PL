@@ -138,7 +138,6 @@ WriteMakefile (
  PREREQ_PM  => {@extra_prereq,qw(
             Acme::Damn          0
             Attribute::Handlers 0
-            Devel::Required     0.07
             Devel::Symdump      0
             List::MoreUtils     0.15
             File::Spec          0

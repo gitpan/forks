@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.32';
+$VERSION = '0.33';
 
 use Config ();
 

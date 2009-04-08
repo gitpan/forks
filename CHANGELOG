@@ -1,4 +1,16 @@
-0.32
+0.33 April 8 2009
+	***** Bug fixes *****
+	
+	exit() in child process after fork() in user code no longer causes process hang.
+	
+	Address issue with Devel::Symdump and internal typeglob reference changes in Perl 5.10.
+	
+	***** Miscellaneous changes *****
+	
+	Removed Devel::Required (used only for forks development) from Makefile.PL required
+	modules.
+	
+0.32	March 18 2009
 	***** Miscellaneous changes *****
 	
 	Minor change to forks08.t nanosleep usage when not available, to avoid srror.

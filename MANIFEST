@@ -2,6 +2,7 @@ CHANGELOG
 CREDITS
 forks.xs
 lib/forks.pm
+lib/forks/Devel/Symdump.pm
 lib/forks/shared.pm
 lib/forks/shared/attributes.pm
 lib/forks/shared/global_filter.pm

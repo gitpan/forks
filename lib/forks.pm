@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.32';
+$VERSION = '0.33';
 
 # Allow external modules to defer shared variable init at require
 
@@ -89,7 +89,7 @@ BEGIN {
 
 use Scalar::Util qw(reftype blessed refaddr);
 use File::Spec;
-use Devel::Symdump;
+use forks::Devel::Symdump; # Perl 5.10.x patch for Devel::Symdump 2.08
 use Acme::Damn ();
 
 # Set constant for IPC temp dir
@@ -485,6 +485,12 @@ use overload
  'fallback' => 1,
 ;
 
+# Keep reference to pre-existing exit function
+my $old_core_global_exit;
+BEGIN {
+    $old_core_global_exit = sub { CORE::exit(@_) };
+}
+
 # Create new() -> create() equivalence
 # Initialize thread server at runtime, in case import was skipped
 
@@ -529,11 +535,16 @@ sub _fork_post_child {
 
 # Restore signals blocked during fork
 # Reset some important state variables
+# Reset CORE::GLOBAL::exit(); will be redefined in _init_thread
 
     POSIX::sigprocmask(SIG_UNBLOCK, $_fork_block_sigset);
     delete $ISATHREAD{$$};
     undef( $TID );
     undef( $PID );
+    {
+        no warnings 'redefine';
+        *CORE::GLOBAL::exit = $old_core_global_exit;
+    }
 } #_fork_post_child
 
 # Overload global fork for best protection against external fork.
@@ -1296,11 +1307,6 @@ _log( " ! global startup" ) if DEBUG;
     $HANDLED_INIT = 1;
 } #_init
 
-my $old_core_global_exit;
-BEGIN {
-    $old_core_global_exit = \&CORE::GLOBAL::exit;
-}
-
 #---------------------------------------------------------------------------
 # Default main thread initialization handler
 
@@ -1331,16 +1337,8 @@ sub _init_main {
         };
 
 # Make this thread 0
-# Overload global exit to conform to ithreads API.
 
     _init_thread(_run_CLONE_SKIP());
-    {
-        no warnings 'redefine';
-        *CORE::GLOBAL::exit = sub {
-            threads::_command( '_toexit',$_[0] );
-            defined $_[0] ? CORE::exit($_[0]) : CORE::exit();
-        };
-    }
 } #_init_main
 
 #---------------------------------------------------------------------------
@@ -1503,7 +1501,7 @@ sub _END {
             $SHUTTING_DOWN_END = 1;
             {
                 no warnings 'redefine';
-                *CORE::GLOBAL::exit = $old_core_global_exit if defined $old_core_global_exit;
+                *CORE::GLOBAL::exit = $old_core_global_exit;
             }
             _command( '_shutdown',$TID )
                 if CORE::kill(0, $SHARED) && ($TID > 0 || !$MAIN_ABRT_HANDLED);
@@ -2167,8 +2165,16 @@ sub _init_thread {
     }
 
 # Reinitialize random number generator (as we're simulating new interpreter creation)
+# Overload global exit to conform to ithreads API (exits all threads).
 
     srand;
+    {
+        no warnings 'redefine';
+        *CORE::GLOBAL::exit = sub {
+            threads::_command( '_toexit',$_[0] );
+            defined $_[0] ? CORE::exit($_[0]) : CORE::exit();
+        };
+    }
 
     return 1;
 } #_init_thread
@@ -3661,7 +3667,7 @@ sub _run_CLONE_SKIP {
 
     my %result;
     $result{pkg} = ['main',
-        grep { $_ !~ /^CORE::|::SUPER$/o } Devel::Symdump->rnew->packages];
+        grep { $_ !~ /^CORE::|::SUPER$/o } forks::Devel::Symdump->rnew->packages];
     foreach my $package (@{$result{pkg}}) {
         my $code;
         if (exists $CLONE_SKIP{$package}) {
@@ -3698,7 +3704,7 @@ sub _run_CLONE {
 #   Use that
 
     my $clone = shift || { skip => undef, pkg => ['main',
-        grep { $_ !~ /^CORE::|::SUPER$/o } Devel::Symdump->rnew->packages]};
+        grep { $_ !~ /^CORE::|::SUPER$/o } forks::Devel::Symdump->rnew->packages]};
     CLONE_LOOP: foreach my $package (@{$clone->{pkg}}) {
         my $code;
         if (exists( $clone->{skip}{$package} ) && $clone->{skip}{$package}) {
@@ -3747,7 +3753,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.32.
+This documentation describes version 0.33.
 
 =head1 SYNOPSIS
 
@@ -3940,7 +3946,6 @@ If you use forks for the first time as "use forks" and other loaded code uses
 
  Acme::Damn (any)
  Attribute::Handlers (any)
- Devel::Required (0.07)
  Devel::Symdump (any)
  File::Spec (any)
  if (any)
@@ -4140,6 +4145,12 @@ will cause END blocks and global destruction to be ignored in those threads.
 This behavior conforms to the expected behavior of native Perl threads. The
 only subtle difference is that the main thread will be signaled using SIGABRT
 to immediately exit.
+
+If you call C<fork()> but do not call <threads->isthread()>, then the child
+process will default to the pre-existing CORE::GLOBAL::exit() or CORE::exit()
+behavior.  Note that such processes are exempt from application global
+termination if exit() is called in a thread, so you must manually clean up
+child processes created in this manner before exiting your threaded application.
 
 =head2 END block behavior
 

@@ -10,7 +10,7 @@ use File::Spec;
 use List::MoreUtils;
 
 use vars '$VERSION';
-$VERSION = '0.32';
+$VERSION = '0.33';
 
 our @FILTER = ();
 my @_dummy = (*ARGVOUT);

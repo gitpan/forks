@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               forks
-version:            0.32
+version:            0.33
 abstract:           forks - emulate threads with fork
 author:
     - Eric Rybski (rybskej@yahoo.com)
@@ -11,7 +11,6 @@ configure_requires:
 requires:
     Acme::Damn:           0
     Attribute::Handlers:  0
-    Devel::Required:      0.07
     Devel::Symdump:       0
     File::Spec:           0
     if:                   0
