@@ -1,5 +1,5 @@
 package forks::shared;    # make sure CPAN picks up on forks::shared.pm
-$VERSION = '0.33';
+$VERSION = '0.34';
 
 use Config ();
 
@@ -35,7 +35,7 @@ package
 # Do everything by the book from now on
 
 BEGIN {
-    $VERSION  = '1.28';
+    $VERSION  = '1.33';
     $threads_shared = $threads_shared = 1;
 }
 use strict;
@@ -1179,7 +1179,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2009 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2010 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

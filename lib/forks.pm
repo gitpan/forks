@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.33';
+$VERSION = '0.34';
 
 # Allow external modules to defer shared variable init at require
 
@@ -15,7 +15,7 @@ package
 # Be strict from now on
 
 BEGIN {
-    $VERSION = '1.72';
+    $VERSION = '1.77';
     $threads        = $threads        = 1; # twice to avoid warnings
     $forks::threads = $forks::threads = 1; # twice to avoid warnings
     $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
@@ -108,6 +108,9 @@ use constant joinable => 0;
 
 use constant EXIT_THREAD_ONLY => 'thread_only';
 use constant EXIT_THREADS_ONLY => 'threads_only';
+
+# (bug?) Perl 5.11+ each function may not correctly set hash iterator when using refs as keys
+use constant RESET_EACH_ITER => $] >= 5.011;
 
 #---------------------------------------------------------------------------
 # Modify Perl's Config.pm to simulate that it was built with ithreads
@@ -246,6 +249,7 @@ use List::MoreUtils;
 # Initialize thread local hash (key: pid) whether this process is a thread
 # Initialize local flag whether main thread received ABRT signal
 # Initialize local flag whether main thread exited due to ABRT signal
+# Initialize local flag whether main thread should be signalled with ABRT on server shutdown
 # Initialize hash (key: pid) of child thread PIDs
 # Thread local flag whether we're shutting down
 # Thread local flag whether we're shutting down in END block
@@ -259,6 +263,7 @@ my $PID_MAIN_THREAD;
 my %ISATHREAD;
 my $MAIN_ABRT_HANDLED = 0;
 my $MAIN_EXIT_WITH_ABRT = 0;
+my $MAIN_EXIT_NO_ABRT = 0;
 my %CHILD_PID;
 my $SHUTTING_DOWN = 0;
 my $SHUTTING_DOWN_END = 0;
@@ -631,7 +636,7 @@ BEGIN {
     *Time::HiRes::sleep = *Time::HiRes::sleep = $sub;
 
     if (&Time::HiRes::d_usleep
-        && defined(my $t = eval { Time::HiRes::nanosleep(0) }) && !$@) {
+        && defined(my $t = eval { Time::HiRes::usleep(0) }) && !$@) {
         $proto = prototype 'Time::HiRes::usleep';
         my $usleep = \&Time::HiRes::usleep;
         $sub = sub {
@@ -1491,7 +1496,7 @@ sub _END {
             }
             CORE::kill('SIGKILL', $_) foreach @pidtokill;
             CORE::kill('SIGABRT', $PID_MAIN_THREAD)
-                if CORE::kill(0, $PID_MAIN_THREAD);
+                if !$MAIN_EXIT_NO_ABRT && CORE::kill(0, $PID_MAIN_THREAD);
 
             $QUERY->shutdown(2) if defined $QUERY;
             unlink($PORT) if $THREADS_UNIX && -S $PORT;
@@ -1582,6 +1587,7 @@ if (DEBUG) {
  my $clients = keys %WRITE;
  _log( " ! $clients>>" ) if $clients;
 }
+        keys %WRITE if RESET_EACH_ITER;
         my $write = (each %WRITE) || '';
         _update_timedwaiting_idx();
         $curtime = time();
@@ -1666,6 +1672,7 @@ _log( " <$CLIENT2TID{$client} ".length($data)." of $toread{$client}" ) if DEBUG;
 #   If we have read something already
 #    If we have all we're expecting
 
+        keys %read if RESET_EACH_ITER;
         while (my $client = each %read) {
             if (my $read = length( $read{$client} )) {
                 if ($read == $toread{$client}) {
@@ -1804,6 +1811,7 @@ _log( "sent $TID2PID{$tid} signal ".abs($signal) ) if DEBUG;
 #   Reloop if there is still stuff to send there
 #   Make sure we won't check this client again
 
+        keys %DONEWITH if RESET_EACH_ITER;
         while (my $client = each %DONEWITH) {
             next if $RUNNING && exists( $WRITE{$client} );
 _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
@@ -1813,13 +1821,18 @@ _log( " !$CLIENT2TID{$client} shutting down" ) if DEBUG;
 #   Obtain the client object (rather than its stringification)
 #   Remove the client from polling loop
 #   Properly close the client from this end
-#   Mark server to shutdown if we were waiting for this client to exit
+#   If we were waiting for this client to exit
+#    Mark that main thread should not be ABRT signalled, if main thread is shutting down
+#    Mark server to shutdown
 
             my $tid = $CLIENT2TID{$client};
             $client = $TID2CLIENT{$tid};
             $select->remove( $client );
             close( $client );
-            $RUNNING = 0 if $RUNNING eq $client;
+            if ($RUNNING eq $client) {
+                $MAIN_EXIT_NO_ABRT = 1 if $tid == 0;
+                $RUNNING = 0;
+            }
 
 #   Do the clean up
 
@@ -3427,7 +3440,7 @@ sub _shutdown {
 #   Try removing TID from %TIMEDWAITING
 #  Delete any messages that might have been pending for this client
 # Else (it's the main thread shutting down and main thread is parent process)
-#  Reset running flag
+#  Update running flag for pending server shutdown
 # Mark this client for deletion
 # Send result to thread to allow it to shut down
 
@@ -3464,7 +3477,7 @@ sub _shutdown {
             }
         }
     } elsif ($THREADS_INTEGRATED_MODEL) {
-        $RUNNING = 0;
+        $RUNNING = $client;
     }
     $DONEWITH{$client} = undef;
     $WRITE{$client} = $true;    #TODO: make sure socket is still alive, otherwise could cause server to croak on dead socket (need to protect server with correct error state--EPIPE?)
@@ -3740,6 +3753,14 @@ sub _run_CLONE {
 
 #---------------------------------------------------------------------------
 
+package
+    forks::shared::_preload; # Preload forks::shared for seamless 'require threads::shared'
+
+require forks::shared
+ unless exists( $ENV{'THREADS_NO_PRELOAD_SHARED'} ) && $ENV{'THREADS_NO_PRELOAD_SHARED'};
+
+#---------------------------------------------------------------------------
+
 # Satisfy -require-
 
 1;
@@ -3753,7 +3774,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.33.
+This documentation describes version 0.34.
 
 =head1 SYNOPSIS
 
@@ -3811,7 +3832,7 @@ This documentation describes version 0.33.
   }
   
   # Use forks as a drop-in replacement for an ithreads application
-  perl -Mforks -Mforks::shared threadapplication
+  perl -Mforks threadapplication
   
 See L<threads/"SYNOPSIS"> for more examples.
   
@@ -3845,10 +3866,9 @@ made during installation barring you from installing on a Windows system.
 Since forks overrides core Perl functions, you are *strongly* encouraged to
 load the forks module before any other Perl modules.  This will insure the
 most consistent and stable system behavior.  This can be easily done without
-affecting existing code, like the following examples:
+affecting existing code, like:
 
     perl -Mforks  script.pl
-    perl -Mforks -Mforks::shared  script.pl
 
 =head2 memory usage
 
@@ -4114,7 +4134,7 @@ like L<POE>, forks has added support to switch the methodology used to maintain
 thraad group state.  This feature is switched on by defining the environment
 variable C<THREADS_DAEMON_MODEL>.  An example use might be:
 
-    THREADS_DAEMON_MODEL=1 perl -Mforks -Mforks::shared -MPOE threadapplication
+    THREADS_DAEMON_MODEL=1 perl -Mforks -MPOE threadapplication
 
 This function essentially reverses the parent-child relationship between the
 main thread and the thread state process that forks.pm uses.  Extra care has
@@ -4368,7 +4388,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2009 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2010 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

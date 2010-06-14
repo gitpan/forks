@@ -18,6 +18,7 @@ META.yml			Module meta-data (added by MakeMaker)
 ppport.h
 README
 SIGNATURE
+t/forks00-requirements.t
 t/forks00-sigtrap.t
 t/forks01.t
 t/forks02.t

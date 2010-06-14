@@ -404,8 +404,7 @@ _id(SV *myref)
         if (!SvROK(myref))
             Perl_croak(aTHX_ "Argument to _id needs to be passed as ref");
         myref = SvRV(myref);
-        if (SvMAGICAL(myref))
-            mg_get(myref);
+        SvGETMAGIC(myref);
         if(SvROK(myref))
             myref = SvRV(myref);
 

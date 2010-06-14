@@ -1,6 +1,6 @@
 package
     forks::signals; #hide from PAUSE
-$VERSION = '0.33';
+$VERSION = '0.34';
 
 use strict;
 use warnings;
@@ -177,7 +177,7 @@ Eric Rybski <rybskej@yahoo.com>.  Please send all module inquries to me.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2009 Eric Rybski <rybskej@yahoo.com>.
+ 2005-2010 Eric Rybski <rybskej@yahoo.com>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.
 

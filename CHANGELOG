@@ -1,3 +1,32 @@
+0.34 June 14 2010
+	***** Bug fixes *****
+	
+	Fix compatibility with perl 5.11 and later. (RT#56263)
+	(Possible bug in core each() iterator, when using blessed globrefs as hash keys?)
+	
+	Main thread will no longer be ABRT signalled (to exit) if it is already shutting down.
+	
+	Fix usleep behavior on platforms without nanosleep support. (RT#52782)
+	
+	Fix test skip counts in forks08.t. (RT#52781)
+	
+	***** Threads API consistency changes *****
+	
+	Bumped threads $VERSION to 1.77, threads::shared $VERSION to 1.33 to match
+	version-supported features and behavior.
+	
+	***** Miscellaneous changes *****
+	
+	Runtime 'require threads::shared' now correctly loads forks::shared in an ithreads-enabled
+	Perl, as long as 'forks' was loaded first.  Can default to the previous behavior with a
+	true-value environment variable, THREADS_NO_PRELOAD_SHARED. (RT#56139)
+	
+	Use SvGETMAGIC macro instead of mg_get.
+	
+	Add module dependency requirements test.
+	
+	Updated to ppport.h 3.19.
+	
 0.33 April 8 2009
 	***** Bug fixes *****
 	

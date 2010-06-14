@@ -4,7 +4,7 @@
 /*
 ----------------------------------------------------------------------
 
-    ppport.h -- Perl/Pollution/Portability Version 3.16
+    ppport.h -- Perl/Pollution/Portability Version 3.19
 
     Automatically created by Devel::PPPort running under perl 5.008008.
 
@@ -23,8 +23,8 @@ SKIP
 if (@ARGV && $ARGV[0] eq '--unstrip') {
   eval { require Devel::PPPort };
   $@ and die "Cannot require Devel::PPPort, please install.\n";
-  if (eval $Devel::PPPort::VERSION < 3.16) {
-    die "ppport.h was originally generated with Devel::PPPort 3.16.\n"
+  if (eval $Devel::PPPort::VERSION < 3.19) {
+    die "ppport.h was originally generated with Devel::PPPort 3.19.\n"
       . "Your Devel::PPPort is only version $Devel::PPPort::VERSION.\n"
       . "Please install a newer version, or --unstrip will not work.\n";
   }
@@ -545,15 +545,28 @@ typedef NVTYPE NV;
 #endif
 #define INT2PTR(any,d) (any)(PTRV)(d)
 #endif
-#define NUM2PTR(any,d) (any)(PTRV)(d)
-#define PTR2IV(p) INT2PTR(IV,p)
-#define PTR2UV(p) INT2PTR(UV,p)
-#define PTR2NV(p) NUM2PTR(NV,p)
+#endif
+#ifndef PTR2ul
 #if PTRSIZE == LONGSIZE
 #define PTR2ul(p) (unsigned long)(p)
 #else
 #define PTR2ul(p) INT2PTR(unsigned long,p)
 #endif
+#endif
+#ifndef PTR2nat
+#define PTR2nat(p) (PTRV)(p)
+#endif
+#ifndef NUM2PTR
+#define NUM2PTR(any,d) (any)PTR2nat(d)
+#endif
+#ifndef PTR2IV
+#define PTR2IV(p) INT2PTR(IV,p)
+#endif
+#ifndef PTR2UV
+#define PTR2UV(p) INT2PTR(UV,p)
+#endif
+#ifndef PTR2NV
+#define PTR2NV(p) NUM2PTR(NV,p)
 #endif
 #undef START_EXTERN_C
 #undef END_EXTERN_C
@@ -653,6 +666,12 @@ STMT_START { \
 PL_stack_sp = PL_stack_base + ax + ((off) - 1); \
 return; \
 } STMT_END
+#endif
+#ifndef XSPROTO
+#define XSPROTO(name) void name(pTHX_ CV* cv)
+#endif
+#ifndef SVfARG
+#define SVfARG(p) ((void*)(p))
 #endif
 #ifndef PERL_ABS
 #define PERL_ABS(x) ((x) < 0 ? -(x) : (x))
@@ -789,9 +808,11 @@ extern U32 DPPP_(my_PL_signals);
 #define PL_dirty dirty
 #define PL_dowarn dowarn
 #define PL_errgv errgv
+#define PL_error_count error_count
 #define PL_expect expect
 #define PL_hexdigit hexdigit
 #define PL_hints hints
+#define PL_in_my in_my
 #define PL_laststatval laststatval
 #define PL_lex_state lex_state
 #define PL_lex_stuff lex_stuff
@@ -845,6 +866,9 @@ extern yy_parser DPPP_(dummy_PL_parser);
 #define PL_lex_state D_PPP_my_PL_parser_var(lex_state)
 #define PL_lex_stuff D_PPP_my_PL_parser_var(lex_stuff)
 #define PL_tokenbuf D_PPP_my_PL_parser_var(tokenbuf)
+#define PL_in_my D_PPP_my_PL_parser_var(in_my)
+#define PL_in_my_stash D_PPP_my_PL_parser_var(in_my_stash)
+#define PL_error_count D_PPP_my_PL_parser_var(error_count)
 #else
 #define PL_parser ((void *) 1)
 #endif
@@ -1250,6 +1274,28 @@ if (_sv) \
 #endif
 #ifndef SvREFCNT_inc_simple_void_NN
 #define SvREFCNT_inc_simple_void_NN(sv) (void)(++SvREFCNT((SV*)(sv)))
+#endif
+#ifndef newSV_type
+#if defined(NEED_newSV_type)
+static SV* DPPP_(my_newSV_type)(pTHX_ svtype const t);
+static
+#else
+extern SV* DPPP_(my_newSV_type)(pTHX_ svtype const t);
+#endif
+#ifdef newSV_type
+#undef newSV_type
+#endif
+#define newSV_type(a) DPPP_(my_newSV_type)(aTHX_ a)
+#define Perl_newSV_type DPPP_(my_newSV_type)
+#if defined(NEED_newSV_type) || defined(NEED_newSV_type_GLOBAL)
+SV*
+DPPP_(my_newSV_type)(pTHX_ svtype const t)
+{
+SV* const sv = newSV(0);
+sv_upgrade(sv, t);
+return sv;
+}
+#endif
 #endif
 #if (PERL_BCDVERSION < 0x5006000)
 #define D_PPP_CONSTPV_ARG(x) ((char *) (x))
@@ -1716,6 +1762,18 @@ return sv;
 #ifndef SvSHARED_HASH
 #define SvSHARED_HASH(sv) (0 + SvUVX(sv))
 #endif
+#ifndef HvNAME_get
+#define HvNAME_get(hv) HvNAME(hv)
+#endif
+#ifndef HvNAMELEN_get
+#define HvNAMELEN_get(hv) (HvNAME_get(hv) ? (I32)strlen(HvNAME_get(hv)) : 0)
+#endif
+#ifndef GvSVn
+#define GvSVn(gv) GvSV(gv)
+#endif
+#ifndef isGV_with_GP
+#define isGV_with_GP(gv) isGV(gv)
+#endif
 #ifndef WARN_ALL
 #define WARN_ALL 0
 #endif
@@ -1912,6 +1970,15 @@ warn("%s", SvPV_nolen(sv));
 #endif
 #ifndef hv_stores
 #define hv_stores(hv, key, val) hv_store(hv, key "", sizeof(key) - 1, val, 0)
+#endif
+#ifndef gv_fetchpvn_flags
+#define gv_fetchpvn_flags(name, len, flags, svt) gv_fetchpv(name, flags, svt)
+#endif
+#ifndef gv_fetchpvs
+#define gv_fetchpvs(name, flags, svt) gv_fetchpvn_flags(name "", sizeof(name) - 1, flags, svt)
+#endif
+#ifndef gv_stashpvs
+#define gv_stashpvs(name, flags) gv_stashpvn(name "", sizeof(name) - 1, flags)
 #endif
 #ifndef SvGETMAGIC
 #define SvGETMAGIC(x) STMT_START { if (SvGMAGICAL(x)) mg_get(x); } STMT_END

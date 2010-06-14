@@ -22,7 +22,7 @@ threads.
 Consider interfacing with graphical Perl debugger intefaces, to simplify
 multi-threaded debugging; managing multiple TTYs, although supported in different
 terminals (1 per thread), can be conceptually difficult.  Considering interface
-to Devel::PDB.  Open to suggestions, comments, patches.
+to Devel::PDB.  Consider support for Eclipse.  Open to suggestions, comments, patches.
 
 
 ***** Issues to Address *****
@@ -95,6 +95,8 @@ forks 0.25, so may be resolved.
 
 
 ***** Miscellaneous Items *****
+
+Update documentation to discuss fault-tolerance (individual thread can't take down the thread group, even with memory faults like segfault).  Very helpful for high-availability systems.
 
 Consider checking _check_pl_signal_unsafe_flag for any thread signaling behavior,
 and warn user about (or prevent from using) signals (i.e. deadlock detect, $t->kill).

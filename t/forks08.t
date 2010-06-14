@@ -72,7 +72,7 @@ cmp_ok($time_int, '<=', 7,'check that main thread did not sleep too long after C
 
 # Check that main thread waits full 5 seconds after CHLD signal
 SKIP: {
-    skip('usleep not supported on this platform',1) unless &Time::HiRes::d_usleep && defined(my $t = eval { &Time::HiRes::usleep(0) }) && !$@;
+    skip('usleep not supported on this platform',2) unless &Time::HiRes::d_usleep && defined(my $t = eval { &Time::HiRes::usleep(0) }) && !$@;
     $t1 = threads->new(sub { sleep 1; });
     $time = &Time::HiRes::usleep(5000000);
     $t1->join();
@@ -83,7 +83,7 @@ SKIP: {
 
 # Check that main thread waits full 5 seconds after CHLD signal
 SKIP: {
-    skip('Time::HiRes::nanosleep function not supported on this platform',1)
+    skip('Time::HiRes::nanosleep function not supported on this platform',2)
         unless &Time::HiRes::d_nanosleep && defined(my $t = eval { &Time::HiRes::nanosleep(0) }) && !$@;
     $t1 = threads->new(sub { sleep 1; });
     $time = &Time::HiRes::nanosleep(5000000000);
