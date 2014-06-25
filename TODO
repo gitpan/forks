@@ -50,6 +50,10 @@ Environment variables should be shared among all threads (ithreads behavior).
 Current working directory should be shared among all threads (ithreads behavior).  Note
 that this may be considered bug in current ithreads implementation.
 
+Should implement to-the-letter behavior: when parent thread calls ->kill and target
+doesn't have a signal handler registered, caller should croak.  Current behavior is
+target emits a warning, exits, and kill caller quietly continues.
+
 Memory is currently not reclaimed for shared variables that are no longer
 referenced by any thread.  Possible solutions: implement PL_destroyhook; or use
 STORE for threads::shared objects, and DESTROY for threads, to track shared var _refcnt.
@@ -95,6 +99,11 @@ forks 0.25, so may be resolved.
 
 
 ***** Miscellaneous Items *****
+
+Consider implementing virtual signals that map to one signal handler, thus allowing
+use of special signals like 'STOP', 'KILL', etc. for improved portability with
+scripts that might use these signal names already.  e.g. ABRT might be used across
+all threads and a virtual signal mask check could be tracked by the shared server.
 
 Update documentation to discuss fault-tolerance (individual thread can't take down the thread group, even with memory faults like segfault).  Very helpful for high-availability systems.
 

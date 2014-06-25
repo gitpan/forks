@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.34';
+$VERSION = '0.35';
 
 # Allow external modules to defer shared variable init at require
 
@@ -15,7 +15,7 @@ package
 # Be strict from now on
 
 BEGIN {
-    $VERSION = '1.77';
+    $VERSION = '1.92';
     $threads        = $threads        = 1; # twice to avoid warnings
     $forks::threads = $forks::threads = 1; # twice to avoid warnings
     $forks::threads_override = $forks::threads_override = 0; # twice to avoid warnings
@@ -1587,8 +1587,7 @@ if (DEBUG) {
  my $clients = keys %WRITE;
  _log( " ! $clients>>" ) if $clients;
 }
-        keys %WRITE if RESET_EACH_ITER;
-        my $write = (each %WRITE) || '';
+        my $write = (keys %WRITE)[0] || '';
         _update_timedwaiting_idx();
         $curtime = time();
         my ($sleep_min) = $write ? (.001) : List::MoreUtils::minmax(
@@ -1708,10 +1707,9 @@ _log( " =$CLIENT2TID{$client} ".CORE::join(' ',(_unpack_request( $read{$client} 
 #    Die now
 #   Fetch the next client to write to
 
-        while ($write) {
+        while ($write && ($write = each %WRITE)) {
             unless (defined $WRITE{$write}) {
                 delete( $WRITE{$write} );
-                $write = each %WRITE;
                 next;
             }
             my $written =
@@ -1728,12 +1726,10 @@ _log( " >$CLIENT2TID{$write} $written of ".length($WRITE{$write}) ) if DEBUG;
             } elsif ($! == ECONNRESET && $CLIENT2TID{$write} == 0) {
                 #main thread exited: wait for SIGCHLD
                 delete( $WRITE{$write} );
-                next;
             } else {
                 _croak( "Error ".($! ? $! + 0 : '').": Could not write ".(length $WRITE{$write})
                     ." bytes to $CLIENT2TID{$write}: ".($! ? $! : '') );
             }
-            $write = each %WRITE;
         }
 my $error = [$select->has_exception( .1 )] if DEBUG;
 if (DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
@@ -1780,7 +1776,7 @@ if (DEBUG) { _log( " #$CLIENT2TID{$_} error" ) foreach @$error; }
             my $success = _signal_thread($tid, $signal);
             CORE::kill('SIGKILL', $TID2PID{$tid})
                 unless $success;
-_log( "sent $TID2PID{$tid} signal ".abs($signal) ) if DEBUG;
+_log( "sent $TID2PID{$tid} signal ".($signal =~ m/^\d+$/ ? abs($signal) : $signal) ) if DEBUG;
             _cleanup_unsafe_thread_exit($tid)
                 if !$success || $signal eq 'KILL' || $signal eq 'SIGKILL'
                     || ($signal =~ m/^\d+$/ && $signal == SIGKILL);
@@ -3774,7 +3770,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.34.
+This documentation describes version 0.35.
 
 =head1 SYNOPSIS
 

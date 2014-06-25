@@ -1,3 +1,23 @@
+0.35 June 25, 2014
+	***** Bug fixes *****
+	
+	Fix a usage bug with an each iterator in manager process. (RT#56263)
+        Improves compatibility with Perl 5.18 and later.
+	
+	Fix manager process issue if a child thread dies while handling a lock event. (RT#69578)
+	
+	Support prompt from ExtUtils::MakeMaker when available. (RT#82781)
+	
+	***** Threads API consistency changes *****
+	
+	Bumped threads $VERSION to 1.92, threads::shared $VERSION to 1.39. to match
+	version-supported features and behavior.
+	
+	***** Miscellaneous changes *****
+
+	Support Makefile.PL env FORKS_SIMULATE_USEITHREADS=1 option to auto-install forks in
+	place of threads namespace for non-ithreaded Perl build. (RT#69880)
+
 0.34 June 14 2010
 	***** Bug fixes *****
 	

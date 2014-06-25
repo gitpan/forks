@@ -3,7 +3,7 @@ package threads::shared::hash;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.34';
+$VERSION = '0.35';
 use strict;
 use Scalar::Util;
 

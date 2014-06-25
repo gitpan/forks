@@ -34,3 +34,4 @@ t/forks20.t
 t/forks99.t
 TODO
 VERSION
+META.json                                Module JSON meta-data (added by MakeMaker)
