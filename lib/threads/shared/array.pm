@@ -3,7 +3,7 @@ package threads::shared::array;
 # Make sure we have version info for this module
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.35';
+$VERSION = '0.36';
 use strict;
 use Scalar::Util;
 
@@ -145,7 +145,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2010 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2014 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

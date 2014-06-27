@@ -1,5 +1,5 @@
 package forks;   # make sure CPAN picks up on forks.pm
-$VERSION = '0.35';
+$VERSION = '0.36';
 
 # Allow external modules to defer shared variable init at require
 
@@ -3459,8 +3459,8 @@ sub _shutdown {
                 last BLOCKING_EVENT;
             }
             if ((my $ordinal = List::MoreUtils::firstidx(
-                sub { ref($_) eq 'ARRAY' ? grep(/^$tid$/, @{$_}) : 0 }, @WAITING)) >= 0) {
-                $WAITING[$ordinal] = [grep(!/^$tid$/, @{$WAITING[$ordinal]})];
+                sub { ref($_) eq 'ARRAY' ? (grep { $_->[0] == $tid } @{$_}) : 0 }, @WAITING)) >= 0) {
+                $WAITING[$ordinal] = [grep { $_->[0] != $tid } @{$WAITING[$ordinal]}];
                 last BLOCKING_EVENT;
             }
             if ((my $ordinal = List::MoreUtils::firstidx(
@@ -3770,7 +3770,7 @@ forks - drop-in replacement for Perl threads using fork()
 
 =head1 VERSION
 
-This documentation describes version 0.35.
+This documentation describes version 0.36.
 
 =head1 SYNOPSIS
 
@@ -4384,7 +4384,7 @@ Elizabeth Mattijsen, <liz@dijkmat.nl>.
 =head1 COPYRIGHT
 
 Copyright (c)
- 2005-2010 Eric Rybski <rybskej@yahoo.com>,
+ 2005-2014 Eric Rybski <rybskej@yahoo.com>,
  2002-2004 Elizabeth Mattijsen <liz@dijkmat.nl>.
 All rights reserved.  This program is free software; you can redistribute it
 and/or modify it under the same terms as Perl itself.

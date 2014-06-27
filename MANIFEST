@@ -1,4 +1,4 @@
-CHANGELOG
+Changes
 CREDITS
 forks.xs
 lib/forks.pm
@@ -33,5 +33,4 @@ t/forks10.t
 t/forks20.t
 t/forks99.t
 TODO
-VERSION
 META.json                                Module JSON meta-data (added by MakeMaker)

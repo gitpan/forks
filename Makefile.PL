@@ -163,6 +163,7 @@ WriteMakefile (
  NAME       => "forks",
  AUTHOR     => 'Eric Rybski (rybskej@yahoo.com)',
  ABSTRACT   => 'forks - emulate threads with fork',
+ LICENSE    => 'perl',
  VERSION_FROM   => 'lib/forks.pm',
 
  PREREQ_PM  => {@extra_prereq,qw(
